@@ -9,89 +9,258 @@ import faiss
 import google.generativeai as genai
 import sys
 from io import StringIO
-# from transformers import pipeline # Removed transformers
+import sqlite3 # Import the sqlite3 library
+from google.colab import userdata
 
 # Configure Generative AI (replace with your API key or use secrets manager)
 # genai.configure(api_key="YOUR_API_KEY")
 # Or use secrets manager:
-# from google.colab import userdata
 # GOOGLE_API_KEY=userdata.get('GOOGLE_API_KEY')
-# genai.configure(api_key=GOOGLE_APIKEY) # Ensure this is correctly configured elsewhere
+# genai.configure(api_key=GOOGLE_API_KEY)
+# Assuming API key is set elsewhere or using a placeholder for local testing
 
 
-# --- Initialize Session State for Data Persistence ---
-# Initialize users_db and tickets_db in session_state
-if "users_db" not in st.session_state:
-    st.session_state["users_db"] = {}
-if "tickets_db" not in st.session_state:
-    st.session_state["tickets_db"] = {}
-if "category_agents" not in st.session_state:
-     st.session_state["category_agents"] = {
-        "shipping": [{"name": "Agent_A", "workload": 0, "available": True, "skills": ["shipping", "tracking"]}, {"name": "Agent_E", "workload": 0, "available": True, "skills": ["shipping"]}], # Added skills
-        "refund": [{"name": "Agent_B", "workload": 0, "available": True, "skills": ["refund", "returns"]}, {"name": "Agent_F", "workload": 0, "available": True, "skills": ["refund"]}], # Added skills
-        "login": [{"name": "Agent_C", "workload": 0, "available": True, "skills": ["login", "account management"]}, {"name": "Agent_G", "workload": 0, "available": True, "skills": ["login"]}], # Added skills
-        "cancellation": [{"name": "Agent_D", "workload": 0, "available": True, "skills": ["cancellation"]}, {"name": "Agent_H", "workload": 0, "available": True, "skills": ["cancellation"]}], # Added skills
-        "default": [{"name": "Agent_X", "workload": 0, "available": True, "skills": ["general support"]}, {"name": "Agent_Y", "workload": 0, "available": True, "skills": ["general support"]}] # Added skills
-    }
-if "agent_indices" not in st.session_state:
-     st.session_state["agent_indices"] = {category: 0 for category in st.session_state["category_agents"]}
+# --- Database Setup (SQLite) ---
+DB_FILE = 'complaints.db'
+
+def init_db():
+    conn = None
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+
+        # Create users table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                email TEXT PRIMARY KEY,
+                password_hash BLOB NOT NULL,
+                salt BLOB NOT NULL,
+                verified BOOLEAN DEFAULT 0
+            )
+        ''')
+
+        # Create tickets table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS tickets (
+                ticket_id TEXT PRIMARY KEY,
+                query TEXT NOT NULL,
+                status TEXT NOT NULL,
+                category TEXT,
+                priority TEXT,
+                assigned_to TEXT,
+                timestamp TEXT,
+                user_email TEXT,
+                feedback TEXT,
+                FOREIGN KEY (user_email) REFERENCES users (email),
+                FOREIGN KEY (assigned_to) REFERENCES agents (name)
+            )
+        ''')
+
+        # Create agents table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS agents (
+                name TEXT PRIMARY KEY,
+                category TEXT,
+                workload INTEGER DEFAULT 0,
+                available BOOLEAN DEFAULT 1,
+                skills TEXT -- Storing skills as a comma-separated string or JSON
+            )
+        ''')
+
+        # Commit changes
+        conn.commit()
+    except sqlite3.Error as e:
+        print(f"Database error during initialization: {e}")
+        # In a real application, you might want to log this error or show a more user-friendly message
+    finally:
+        if conn:
+            conn.close()
 
 
-# Use the databases from session state
-users_db = st.session_state["users_db"]
-tickets_db = st.session_state["tickets_db"]
-category_agents = st.session_state["category_agents"]
-agent_indices = st.session_state["agent_indices"]
+# Initialize the database and tables on startup
+init_db()
+
+# --- Initialize Session State for UI Persistence (Database handles data persistence) ---
+if "page" not in st.session_state:
+    st.session_state["page"] = "login"
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
+if "user_email" not in st.session_state:
+    st.session_state["user_email"] = None
 
 
-# --- User Registration and Authentication ---
+# --- User Registration and Authentication (Database Interaction) ---
 def register_user(email, password):
-    if email in users_db:
-        return False, "Email already exists."
+    conn = None
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('SELECT email FROM users WHERE email = ?', (email,))
+        if cursor.fetchone():
+            return False, "Email already exists."
 
-    salt = os.urandom(16)
-    hashed_password = hashlib.pbkdf2_hmac(
-        'sha256',
-        password.encode('utf-8'),
-        salt,
-        100000
-    )
+        salt = os.urandom(16)
+        hashed_password = hashlib.pbkdf2_hmac(
+            'sha256',
+            password.encode('utf-8'),
+            salt,
+            100000
+        )
 
-    users_db[email] = {
-        "password_hash": hashed_password,
-        "salt": salt,
-        # Immediately set verified to True as email verification is skipped
-        "verified": True,
-        "verification_token": None # No token needed if immediately verified
-    }
-    # Return the user data along with success status and message
-    return True, "User registered successfully.", users_db[email]
+        cursor.execute('INSERT INTO users (email, password_hash, salt, verified) VALUES (?, ?, ?, ?)',
+                       (email, hashed_password, salt, True)) # Automatically verified
+        conn.commit()
+
+        return True, "User registered successfully."
+    except sqlite3.Error as e:
+        print(f"Database error during user registration: {e}")
+        return False, "An error occurred during registration. Please try again."
+    finally:
+        if conn:
+            conn.close()
+
 
 def authenticate_user(email, password):
-    user = users_db.get(email)
-    if not user:
-        # Modified error message for non-registered email
-        return False, "User not registered. Please register first."
+    conn = None
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('SELECT password_hash, salt, verified FROM users WHERE email = ?', (email,))
+        user_data = cursor.fetchone()
 
-    stored_salt = user["salt"]
-    stored_hash = user["password_hash"]
+        if not user_data:
+            return False, "User not registered. Please register first."
 
-    provided_password_hash = hashlib.pbkdf2_hmac(
-        'sha256',
-        password.encode('utf-8'),
-        stored_salt,
-        100000
-    )
+        stored_hash, stored_salt, verified = user_data
 
-    if provided_password_hash == stored_hash:
-        # if not user["verified"]: # Verification check is skipped as per requirement
-        #     return False, "Please verify your email."
-        return True, "Authentication successful."
-    else:
-        return False, "Invalid email or password." # Keep this for wrong password
+        provided_password_hash = hashlib.pbkdf2_hmac(
+            'sha256',
+            password.encode('utf-8'),
+            stored_salt,
+            100000
+        )
+
+        if provided_password_hash == stored_hash:
+            # Verification check is skipped as per requirement
+            # if not verified:
+            #     return False, "Please verify your email."
+            return True, "Authentication successful."
+        else:
+            return False, "Invalid email or password." # Keep this for wrong password
+    except sqlite3.Error as e:
+        print(f"Database error during user authentication: {e}")
+        return False, "An error occurred during authentication. Please try again."
+    finally:
+        if conn:
+            conn.close()
 
 
-# --- AI-Powered Ticketing System ---
+# --- Agent Management (Database Interaction) ---
+# Initial agent data (will be inserted into the database if not present)
+initial_agents_data = {
+    "shipping": [{"name": "Agent_A", "workload": 0, "available": True, "skills": ["shipping", "tracking"]}, {"name": "Agent_E", "workload": 0, "available": True, "skills": ["shipping"]}],
+    "refund": [{"name": "Agent_B", "workload": 0, "available": True, "skills": ["refund", "returns"]}, {"name": "Agent_F", "workload": 0, "available": True, "skills": ["refund"]}],
+    "login": [{"name": "Agent_C", "workload": 0, "available": True, "skills": ["login", "account management"]}, {"name": "Agent_G", "workload": 0, "available": True, "skills": ["login"]}],
+    "cancellation": [{"name": "Agent_D", "workload": 0, "available": True, "skills": ["cancellation"]}, {"name": "Agent_H", "workload": 0, "available": True, "skills": ["cancellation"]}],
+    "default": [{"name": "Agent_X", "workload": 0, "available": True, "skills": ["general support"]}, {"name": "Agent_Y", "workload": 0, "available": True, "skills": ["general support"]}]
+}
+
+def init_agents():
+     conn = None
+     try:
+          conn = sqlite3.connect(DB_FILE)
+          cursor = conn.cursor()
+          cursor.execute('SELECT COUNT(*) FROM agents')
+          count = cursor.fetchone()[0]
+          if count == 0:
+               print("Initializing agents in the database.")
+               for category, agents in initial_agents_data.items():
+                    for agent in agents:
+                         # Store skills as comma-separated string
+                         skills_str = ",".join(agent.get("skills", []))
+                         cursor.execute('INSERT INTO agents (name, category, workload, available, skills) VALUES (?, ?, ?, ?, ?)',
+                                        (agent["name"], category, agent["workload"], agent["available"], skills_str))
+               conn.commit()
+     except sqlite3.Error as e:
+        print(f"Database error during agent initialization: {e}")
+     finally:
+        if conn:
+            conn.close()
+
+
+# Initialize agents in the database if not already present
+init_agents()
+
+
+def get_all_agents():
+     conn = None
+     try:
+          conn = sqlite3.connect(DB_FILE)
+          conn.row_factory = sqlite3.Row # Allows accessing columns by name
+          cursor = conn.cursor()
+          cursor.execute('SELECT * FROM agents')
+          agents = cursor.fetchall() # Get sqlite3.Row objects
+          processed_agents = []
+          for agent_row in agents:
+               # Access elements using string keys directly on agent_row
+               agent_dict = {
+                   'name': agent_row['name'],
+                   'category': agent_row['category'],
+                   'workload': agent_row['workload'],
+                   'available': bool(agent_row['available']), # Convert integer to boolean
+                   'skills': agent_row['skills'].split(',') if agent_row['skills'] else [] # Convert string back to list
+               }
+               processed_agents.append(agent_dict)
+          return processed_agents
+     except sqlite3.Error as e:
+        print(f"Database error getting all agents: {e}")
+        return [] # Return empty list on error
+     finally:
+        if conn:
+            conn.close()
+
+
+def get_agents_by_category(category):
+     conn = None
+     try:
+          conn = sqlite3.connect(DB_FILE)
+          conn.row_factory = sqlite3.Row
+          cursor = conn.cursor()
+          cursor.execute('SELECT * FROM agents WHERE category = ? OR category = "default"', (category,))
+          agents = cursor.fetchall() # Get sqlite3.Row objects
+          processed_agents = []
+          for agent_row in agents:
+               # Access elements using string keys directly on agent_row
+               agent_dict = {
+                   'name': agent_row['name'],
+                   'category': agent_row['category'],
+                   'workload': agent_row['workload'],
+                   'available': bool(agent_row['available']), # Convert integer to boolean
+                   'skills': agent_row['skills'].split(',') if agent_row['skills'] else [] # Convert string back to list
+               }
+               processed_agents.append(agent_dict)
+          return processed_agents
+     except sqlite3.Error as e:
+        print(f"Database error getting agents by category: {e}")
+        return [] # Return empty list on error
+     finally:
+        if conn:
+            conn.close()
+
+
+def update_agent_workload(agent_name, workload_change):
+     conn = None
+     try:
+          conn = sqlite3.connect(DB_FILE)
+          cursor = conn.cursor()
+          cursor.execute('UPDATE agents SET workload = workload + ? WHERE name = ?', (workload_change, agent_name))
+          conn.commit()
+     except sqlite3.Error as e:
+        print(f"Database error updating agent workload: {e}")
+     finally:
+        if conn:
+            conn.close()
+
 
 def categorize_query(query):
     query_lower = query.lower()
@@ -114,18 +283,24 @@ def ask_gemini(prompt):
         # Attempt to get the real API key from secrets
         api_key = userdata.get('GOOGLE_API_KEY')
         if api_key is None:
+             # print("Warning: Google API Key not found in secrets. Using mock Gemini.")
              raise ValueError("API key not found in secrets.")
+
 
         # Re-configure genai with the actual API key if it's not already configured
         # This handles cases where the script might rerun without the secrets being re-read at the top level
-        current_config = genai.configure()
-        if not hasattr(current_config, 'api_key') or current_config.api_key != api_key:
-             genai.configure(api_key=api_key)
+        try:
+             current_config = genai.configure()
+             if not hasattr(current_config, 'api_key') or current_config.api_key != api_key:
+                  genai.configure(api_key=api_key)
+        except Exception as config_error:
+             print(f"Warning: Could not re-configure genai API key: {config_error}. Proceeding if already configured.")
+             # If re-configuration fails, assume it might be configured from a previous run
 
 
     except Exception as e:
         # If API key is not available or genai configuration fails, use mock
-        # print(f"Warning: Gemini API not configured ({e}). Using mock function.")
+        print(f"Warning: Gemini API not available ({e}). Using mock function.")
         if "sentiment and urgency" in prompt:
             if "immediately" in prompt:
                 return "Priority: High"
@@ -135,6 +310,7 @@ def ask_gemini(prompt):
                 return "Priority: Low"
         elif "Based on the provided FAQs, answer the user query" in prompt:
              # Simple keyword matching mock for RAG prompt
+             # This mock needs to return ANSWER: or NO_ANSWER to be consistent with handle_query
              for doc in docs:
                  if any(word.lower() in prompt.lower() for word in doc.split()[:5]): # Very basic mock matching
                       return "ANSWER: " + doc
@@ -188,7 +364,8 @@ Priority:"""
 
 
 def assign_agent(category, skills_required=None): # Modified to include skills
-    agents = category_agents.get(category, category_agents["default"])
+    agents = get_agents_by_category(category) # Get agents from DB
+
     available_agents = [agent for agent in agents if agent["available"]]
 
     if skills_required:
@@ -201,29 +378,37 @@ def assign_agent(category, skills_required=None): # Modified to include skills
 
     # Assign based on workload (simple load balancing)
     assigned_agent = min(available_agents, key=lambda agent: agent["workload"])
-    assigned_agent["workload"] += 1
+    update_agent_workload(assigned_agent["name"], 1) # Update workload in DB
     return assigned_agent["name"]
 
 
 def raise_ticket(query, email):
-    category = categorize_query(query)
-    priority = determine_priority(query)
-    # Determine skills required based on category (can be more complex)
-    skills_required = [category] if category != "default" else ["general support"]
-    agent = assign_agent(category, skills_required) # Pass skills to assign_agent
+    conn = None
+    try:
+        category = categorize_query(query)
+        priority = determine_priority(query)
+        # Determine skills required based on category (can be more complex)
+        skills_required = [category] if category != "default" else ["general support"]
+        agent = assign_agent(category, skills_required) # Pass skills to assign_agent
 
-    ticket_id = str(uuid.uuid4())[:8]
-    tickets_db[ticket_id] = {
-        "Query": query,
-        "Status": "Pending",
-        "category": category,
-        "priority": priority,
-        "assigned_to": agent,
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "user_email": email, # Changed from "user" to "user_email"
-        "feedback": None # Added for feedback mechanism
-    }
-    return ticket_id
+        ticket_id = str(uuid.uuid4())[:8]
+
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO tickets (ticket_id, query, status, category, priority, assigned_to, timestamp, user_email, feedback)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (ticket_id, query, "Pending", category, priority, agent, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), email, None))
+        conn.commit()
+
+        return ticket_id
+    except sqlite3.Error as e:
+        print(f"Database error raising ticket: {e}")
+        return None # Indicate failure
+    finally:
+        if conn:
+            conn.close()
+
 
 # --- AI-Powered Chatbot Integration ---
 # Sample support data
@@ -240,25 +425,27 @@ docs = [
     "How do I contact customer support? You can contact customer support via the chatbot, email, or phone number listed on our Contact Us page."
 ]
 
+# TF-IDF and FAISS are not used with the new RAG prompt approach for now.
+# They are kept here for reference or potential future use.
 # Create TF-IDF embeddings (Still useful for potential future enhancements or fallback)
-vectorizer = TfidfVectorizer()
-doc_vectors = vectorizer.fit_transform(docs).toarray()
+# vectorizer = TfidfVectorizer()
+# doc_vectors = vectorizer.fit_transform(docs).toarray()
 
 # Setup FAISS index (Still useful for potential future enhancements or fallback)
-dimension = doc_vectors.shape[1]
-index = faiss.IndexFlatL2(dimension)
-index.add(np.array(doc_vectors).astype("float32"))
+# dimension = doc_vectors.shape[1]
+# index = faiss.IndexFlatL2(dimension)
+# index.add(np.array(doc_vectors).astype("float32"))
 
 
-def retrieve_answer_from_docs(user_query):
-    # This function is less critical now as Gemini handles the RAG logic
-    # but can be kept for potential future use or as a fallback.
-    query_vec = vectorizer.transform([user_query]).toarray().astype("float32")
-    D, I = index.search(query_vec, k=1)
-    # Threshold can still be relevant if this function is used
-    if D[0][0] > 0.6:
-        return None
-    return docs[I[0][0]]
+# def retrieve_answer_from_docs(user_query):
+#     # This function is less critical now as Gemini handles the RAG logic
+#     # but can be kept for potential future use or as a fallback.
+#     query_vec = vectorizer.transform([user_query]).toarray().astype("float32")
+#     D, I = index.search(query_vec, k=1)
+#     # Threshold can still be relevant if this function is used
+#     if D[0][0] > 0.6:
+#         return None
+#     return docs[I[0][0]]
 
 
 def handle_query(user_query, email=None): # Changed username to email
@@ -311,16 +498,42 @@ If you cannot answer the query based on the FAQs, respond with "NO_ANSWER".
              return {"resolved": False, "ticket_id": None, "message": "An error occurred while processing your query. Please provide an email to raise a ticket."}
 
 
-# --- Real-time Complaint Status Tracking ---
+# --- Real-time Complaint Status Tracking (Database Interaction) ---
 def get_ticket_by_id(ticket_id):
-    return tickets_db.get(ticket_id)
+    conn = None
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        conn.row_factory = sqlite3.Row # Allows accessing columns by name
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM tickets WHERE ticket_id = ?', (ticket_id,))
+        ticket = cursor.fetchone()
+        if ticket:
+            return dict(ticket) # Return as a dictionary for consistent access
+        return None
+    except sqlite3.Error as e:
+        print(f"Database error getting ticket by ID: {e}")
+        return None # Return None on error
+    finally:
+        if conn:
+            conn.close()
+
 
 def get_user_tickets(email): # Changed username to email
-    user_tickets = {}
-    for ticket_id, ticket_info in tickets_db.items():
-        if ticket_info.get("user_email") == email: # Changed "user" to "user_email"
-            user_tickets[ticket_id] = ticket_info
-    return user_tickets
+    conn = None
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        conn.row_factory = sqlite3.Row # Allows accessing columns by name
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM tickets WHERE user_email = ?', (email,))
+        tickets = [dict(row) for row in cursor.fetchall()] # Convert Row to dict for consistency
+        return tickets
+    except sqlite3.Error as e:
+        print(f"Database error getting user tickets: {e}")
+        return [] # Return empty list on error
+    finally:
+        if conn:
+            conn.close()
+
 
 # Modified to return data instead of printing for Streamlit display
 def view_my_tickets(email): # Changed username to email
@@ -329,119 +542,178 @@ def view_my_tickets(email): # Changed username to email
         return f"🙁 No tickets found for user: {email}" # Changed username to email
 
     output = f"📋 Your Tickets ({email}):\n" # Changed username to email
-    for ticket_id, ticket_info in user_db.items():
+    # Corrected iteration and access
+    for ticket_info in user_tickets:
         output += "-" * 20 + "\n"
-        output += f"🎫 Ticket ID: {ticket_id}\n"
-        output += f"Query: {ticket_info.get('Query', 'N/A')}\n"
-        output += f"Status: {ticket_info.get('Status', 'N/A')}\n"
+        # Ensure keys match database column names and are accessed correctly
+        # Use .get() for safe access in case a key is missing, though with sqlite3.Row
+        # and correct table creation, direct string keys should be fine too.
+        output += f"🎫 Ticket ID: {ticket_info.get('ticket_id', 'N/A')}\n"
+        output += f"Query: {ticket_info.get('query', 'N/A')}\n"
+        output += f"Status: {ticket_info.get('status', 'N/A')}\n"
         output += f"Category: {ticket_info.get('category', 'N/A')}\n"
         output += f"Priority: {ticket_info.get('priority', 'N/A')}\n"
         output += f"Assigned to: {ticket_info.get('assigned_to', 'N/A')}\n"
         output += f"Timestamp: {ticket_info.get('timestamp', 'N/A')}\n"
-        output += f"User Email: {ticket_info.get('user_email', 'N/A')}\n" # Changed "User" to "User Email" and "user" to "user_email"
-        output += f"Feedback: {ticket_info.get('feedback', 'N/A')}\n" # Added feedback
+        output += f"User Email: {ticket_info.get('user_email', 'N/A')}\n"
+        output += f"Feedback: {ticket_info.get('feedback', 'N/A')}\n"
     output += "-" * 20 + "\n"
     return output
 
 
 # Modified to return data instead of printing for Streamlit display
 def track_ticket(ticket_id):
-    ticket = tickets_db.get(ticket_id)
+    ticket = get_ticket_by_id(ticket_id) # Get ticket from DB
     if ticket:
         output = f"🎫 Ticket ID: {ticket_id}\n"
-        output += f"Query: {ticket.get('Query', 'N/A')}\n"
-        output += f"Status: {ticket.get('Status', 'N/A')}\n"
+        output += f"Query: {ticket.get('query', 'N/A')}\n" # Use lowercase key 'query'
+        output += f"Status: {ticket.get('status', 'N/A')}\n" # Use lowercase key 'status'
         output += f"Category: {ticket.get('category', 'N/A')}\n"
         output += f"Priority: {ticket.get('priority', 'N/A')}\n"
         output += f"Assigned to: {ticket.get('assigned_to', 'N/A')}\n"
         output += f"Timestamp: {ticket.get('timestamp', 'N/A')}\n"
-        output += f"User Email: {ticket.get('user_email', 'N/A')}\n" # Changed "User" to "User Email" and "user" to "user_email"
-        output += f"Feedback: {ticket.get('feedback', 'N/A')}\n" # Added feedback
+        output += f"User Email: {ticket.get('user_email', 'N/A')}\n"
+        output += f"Feedback: {ticket.get('feedback', 'N/A')}\n"
         return output
     else:
         return "❌ Ticket not found."
 
-# --- Feedback Mechanism (Innovative Feature) ---
+# --- Feedback Mechanism (Database Interaction) ---
 def provide_feedback(ticket_id, feedback_text):
-    ticket = tickets_db.get(ticket_id)
-    if ticket:
-        if ticket.get("Status") == "Resolved": # Only allow feedback on resolved tickets
-            ticket["feedback"] = feedback_text
-            # print(f"✅ Feedback recorded for Ticket ID {ticket_id}.") # Removed print for UI
-            return True, f"✅ Feedback recorded for Ticket ID {ticket_id}."
+    conn = None
+    try:
+        ticket = get_ticket_by_id(ticket_id) # Get ticket from DB
+        if ticket:
+            if ticket.get("status") == "Resolved": # Only allow feedback on resolved tickets (use lowercase key)
+                conn = sqlite3.connect(DB_FILE)
+                cursor = conn.cursor()
+                cursor.execute('UPDATE tickets SET feedback = ? WHERE ticket_id = ?', (feedback_text, ticket_id))
+                conn.commit()
+                return True, f"✅ Feedback recorded for Ticket ID {ticket_id}."
+            else:
+                return False, f"🙁 Feedback can only be provided for resolved tickets."
         else:
-            # print(f"🙁 Feedback can only be provided for resolved tickets.") # Removed print for UI
-            return False, f"🙁 Feedback can only be provided for resolved tickets."
-    else:
-        # print(f"❌ Ticket ID {ticket_id} not found.") # Removed print for UI
-        return False, f"❌ Ticket ID {ticket_id} not found."
+            return False, f"❌ Ticket ID {ticket_id} not found."
+    except sqlite3.Error as e:
+        print(f"Database error providing feedback: {e}")
+        return False, "An error occurred while submitting feedback."
+    finally:
+        if conn:
+            conn.close()
 
 
-# --- Admin Interface ---
+# --- Admin Interface (Database Interaction) ---
 # Modified to return data instead of printing for Streamlit display
 def admin_view_all_tickets():
-    if not tickets_db:
-        return "🙁 No tickets found in the database."
+    conn = None
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        cursor.execute('SELECT * FROM tickets')
+        tickets = [dict(row) for row in cursor.fetchall()] # Convert Row to dict for consistency
 
-    output = "📋 All Tickets:\n"
-    for ticket_id, ticket_info in tickets_db.items():
+        if not tickets:
+            return "🙁 No tickets found in the database."
+
+        output = "📋 All Tickets:\n"
+        for ticket_info in tickets: # Iterate directly over the list of dictionaries
+            output += "-" * 20 + "\n"
+            output += f"🎫 Ticket ID: {ticket_info.get('ticket_id', 'N/A')}\n" # Use lowercase key 'ticket_id'
+            output += f"Query: {ticket_info.get('query', 'N/A')}\n" # Use lowercase key 'query'
+            output += f"Status: {ticket_info.get('status', 'N/A')}\n" # Use lowercase key 'status'
+            output += f"Category: {ticket_info.get('category', 'N/A')}\n"
+            output += f"Priority: {ticket_info.get('priority', 'N/A')}\n"
+            output += f"Assigned to: {ticket_info.get('assigned_to', 'N/A')}\n"
+            output += f"Timestamp: {ticket_info.get('timestamp', 'N/A')}\n"
+            output += f"User Email: {ticket_info.get('user_email', 'N/A')}\n"
+            output += f"Feedback: {ticket_info.get('feedback', 'N/A')}\n"
         output += "-" * 20 + "\n"
-        output += f"🎫 Ticket ID: {ticket_id}\n"
-        output += f"Query: {ticket_info.get('Query', 'N/A')}\n"
-        output += f"Status: {ticket_info.get('Status', 'N/A')}\n"
-        output += f"Category: {ticket_info.get('category', 'N/A')}\n"
-        output += f"Priority: {ticket_info.get('priority', 'N/A')}\n"
-        output += f"Assigned to: {ticket_info.get('assigned_to', 'N/A')}\n"
-        output += f"Timestamp: {ticket_info.get('timestamp', 'N/A')}\n"
-        output += f"User Email: {ticket_info.get('user_email', 'N/A')}\n" # Changed "User" to "User Email" and "user" to "user_email"
-        output += f"Feedback: {ticket_info.get('feedback', 'N/A')}\n" # Added feedback
-    output += "-" * 20 + "\n"
-    return output
+        return output
+    except sqlite3.Error as e:
+        print(f"Database error viewing all tickets: {e}")
+        return "An error occurred while retrieving tickets."
+    finally:
+        if conn:
+            conn.close()
+
 
 def admin_update_ticket_status(ticket_id, new_status):
-    ticket = tickets_db.get(ticket_id)
-    if ticket:
-        ticket['Status'] = new_status
-        # print(f"✅ Status for Ticket ID {ticket_id} updated to: {new_status}") # Removed print for UI
-        return True, f"✅ Status for Ticket ID {ticket_id} updated to: {new_status}"
-    else:
-        # print(f"❌ Ticket ID {ticket_id} not found.") # Removed print for UI
-        return False, f"❌ Ticket ID {ticket_id} not found."
+    conn = None
+    try:
+        ticket = get_ticket_by_id(ticket_id) # Get ticket from DB
+        if ticket:
+            old_status = ticket.get('status') # Use lowercase key 'status'
+            conn = sqlite3.connect(DB_FILE)
+            cursor = conn.cursor()
+            cursor.execute('UPDATE tickets SET status = ? WHERE ticket_id = ?', (new_status, ticket_id))
+            conn.commit()
+
+            message = f"✅ Status for Ticket ID {ticket_id} updated to: {new_status}"
+            print(f"{message}") # Keep print for logging
+            email = ticket.get('user_email')
+            if email and old_status != new_status: # Only notify if status actually changed
+                send_notification(email, f"Your ticket status has been updated to {new_status}.")
+                automated_response(ticket_id, new_status)
+            return True, message
+        else:
+            message = f"❌ Ticket ID {ticket_id} not found."
+            print(f"{message}") # Keep print for logging
+            return False, message
+    except sqlite3.Error as e:
+        print(f"Database error updating ticket status: {e}")
+        return False, "An error occurred while updating ticket status."
+    finally:
+        if conn:
+            conn.close()
+
 
 def admin_assign_ticket(ticket_id, new_agent):
-    ticket = tickets_db.get(ticket_id)
-    if ticket:
-        old_agent = ticket.get('assigned_to')
-        if old_agent:
-             for category in category_agents.values():
-                 for agent in category:
-                     if agent["name"] == old_agent:
-                         agent["workload"] -= 1
+    conn = None
+    try:
+        ticket = get_ticket_by_id(ticket_id) # Get ticket from DB
+        if ticket:
+            old_agent = ticket.get('assigned_to')
+            if old_agent:
+                 update_agent_workload(old_agent, -1) # Decrease workload for old agent
 
-        ticket['assigned_to'] = new_agent
+            conn = sqlite3.connect(DB_FILE)
+            cursor = conn.cursor()
+            cursor.execute('UPDATE tickets SET assigned_to = ? WHERE ticket_id = ?', (new_agent, ticket_id))
+            conn.commit()
 
-        for category in category_agents.values():
-             for agent in category:
-                 if agent["name"] == new_agent:
-                     agent["workload"] += 1
+            update_agent_workload(new_agent, 1) # Increase workload for new agent
 
-        # print(f"✅ Ticket ID {ticket_id} assigned to: {new_agent}") # Removed print for UI
-        return True, f"✅ Ticket ID {ticket_id} assigned to: {new_agent}"
-    else:
-        # print(f"❌ Ticket ID {ticket_id} not found.") # Removed print for UI
-        return False, f"❌ Ticket ID {ticket_id} not found."
+            message = f"✅ Ticket ID {ticket_id} assigned to: {new_agent}"
+            print(f"{message}") # Keep print for logging
+            return True, message
+        else:
+            message = f"❌ Ticket ID {ticket_id} not found."
+            print(f"{message}") # Keep print for logging
+            return False, message
+    except sqlite3.Error as e:
+        print(f"Database error assigning ticket: {e}")
+        return False, "An error occurred while assigning the ticket."
+    finally:
+        if conn:
+            conn.close()
+
 
 # Modified to return data instead of printing for Streamlit display
 def admin_view_agent_workload():
+    agents = get_all_agents() # Get agents from DB
     output = "📊 Agent Workload:\n"
-    all_agents = [agent for agents in category_agents.values() for agent in agents]
-    agent_workloads = {}
-    for agent in all_agents:
-         agent_workloads[agent["name"]] = agent.get("workload", 0)
+    if not agents:
+        return "🙁 No agents found or an error occurred retrieving agent data."
 
-    for agent_name, workload in agent_workloads.items():
-        output += f"- {agent_name}: {workload} tickets\n"
+    # Corrected iteration and access - ensure 'agent_dict' is treated as a dictionary
+    for agent_dict in agents: # Variable name already correctly suggests it's a dictionary
+        # Access name and workload using dictionary keys, with .get for safety
+        agent_name = agent_dict.get('name', 'N/A')
+        agent_workload = agent_dict.get('workload', 'N/A')
+        output += f"- {agent_name}: {agent_workload} tickets\n"
     return output
+
 
 # --- Notifications and Automated Responses (Conceptual) ---
 # In a real system, this would involve sending emails, in-app notifications, etc.
@@ -455,45 +727,40 @@ def automated_response(ticket_id, status):
 
 # Example of integrating notifications into status update
 def admin_update_ticket_status_with_notification(ticket_id, new_status):
-    ticket = tickets_db.get(ticket_id)
-    if ticket:
-        old_status = ticket.get('Status')
-        ticket['Status'] = new_status
-        message = f"Status for Ticket ID {ticket_id} updated to: {new_status}"
-        print(f"✅ {message}") # Keep print for logging
-        email = ticket.get('user_email') # Changed user to user_email
-        if email and old_status != new_status: # Only notify if status actually changed
-            send_notification(email, f"Your ticket status has been updated to {new_status}.") # Pass email
-            automated_response(ticket_id, new_status)
-        return True, message
-    else:
-        message = f"Ticket ID {ticket_id} not found."
-        print(f"❌ {message}") # Keep print for logging
-        return False, message
+    # This function is essentially the same as admin_update_ticket_status now,
+    # as notifications are integrated there. Keeping for clarity.
+    return admin_update_ticket_status(ticket_id, new_status)
 
 
 ADMIN_EMAIL = "admin@test.com"
 ADMIN_PASSWORD = "admin123"
 
-# Check if admin user exists, register if not
-if ADMIN_EMAIL not in users_db:
-    reg_success, message, _ = register_user(ADMIN_EMAIL, ADMIN_PASSWORD) # Capture the return values
-    if reg_success:
-        print(f"Admin user '{ADMIN_EMAIL}' registered successfully.")
-        # Immediately verify the admin user as email verification is not implemented
-        users_db[ADMIN_EMAIL]["verified"] = True
-        users_db[ADMIN_EMAIL]["verification_token"] = None
-        print("Admin user verified.")
+# Check if admin user exists in DB, register if not
+conn = None
+try:
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('SELECT email FROM users WHERE email = ?', (ADMIN_EMAIL,))
+    admin_exists = cursor.fetchone()
+
+    if not admin_exists:
+        reg_success, message = register_user(ADMIN_EMAIL, ADMIN_PASSWORD)
+        if reg_success:
+            print(f"Admin user '{ADMIN_EMAIL}' registered successfully in DB.")
+            # Since register_user now auto-verifies in DB, no separate verification needed here.
+        else:
+            print(f"Failed to register admin user in DB: {message}")
     else:
-        print(f"Failed to register admin user: {message}")
-else:
-    # Ensure admin user is marked as verified if they already exist
-    if not users_db[ADMIN_EMAIL].get("verified", False):
-         users_db[ADMIN_EMAIL]["verified"] = True
-         users_db[ADMIN_EMAIL]["verification_token"] = None
-         print(f"Admin user '{ADMIN_EMAIL}' found and marked as verified.")
-    else:
-        print(f"Admin user '{ADMIN_EMAIL}' already exists and is verified.")
+        print(f"Admin user '{ADMIN_EMAIL}' already exists in DB.")
+        # Ensure admin user is marked as verified in DB if they already exist
+        cursor.execute('UPDATE users SET verified = ? WHERE email = ?', (True, ADMIN_EMAIL))
+        conn.commit()
+        print(f"Admin user '{ADMIN_EMAIL}' found and marked as verified in DB.")
+except sqlite3.Error as e:
+    print(f"Database error during admin user check/registration: {e}")
+finally:
+    if conn:
+        conn.close()
 
 
 # Initialize session state
@@ -523,7 +790,7 @@ def login_page():
                 st.session_state["page"] = "admin"
             else:
                 st.session_state["page"] = "user"
-            st.rerun() # Changed from st.experimental_rerun() to st.rerun()
+            st.rerun()
         else:
             st.error(message)
 
@@ -543,13 +810,13 @@ def registration_page():
 
     if st.button("Register", key="register_button"):
         if new_password == confirm_password:
-            reg_success, message, registered_user_data = register_user(new_email, new_password) # Capture registered_user_data
+            reg_success, message = register_user(new_email, new_password) # register_user now handles DB insertion
             if reg_success:
-                st.success(message)
+                st.success(message + " You can now log in.")
                 # Automatically log in the user after registration
-                st.session_state["authenticated"] = True
-                st.session_state["user_email"] = new_email # Use the email entered
-                st.session_state["page"] = "user"
+                # st.session_state["authenticated"] = True # Don't auto-login, let them use the login page
+                # st.session_state["user_email"] = new_email
+                st.session_state["page"] = "login" # Redirect to login page after registration
                 st.rerun()
             else:
                 st.error(message)
@@ -609,14 +876,15 @@ def user_page():
     if st.button("Submit Query", key="submit_query_button"): # Added a key
         if user_query:
             result = handle_query(user_query, email=user_email)
-            if result["resolved"]:
-                st.success(f"Answer: {result['answer']}")
-            else:
-                 # Display message returned by handle_query for NO_ANSWER or errors
-                 st.info(result.get("message", "Could not resolve query. Ticket might have been raised."))
+            if result and result.get("resolved"): # Check if result is not None and resolved
+                st.success(f"Answer: {result.get('answer', 'N/A')}") # Use .get for safety
+            elif result: # If result is not None but not resolved
+                 st.info(result.get("message", "Could not resolve query. Ticket might have been raised.")) # Use .get for safety
                  # You might want to explicitly show the ticket ID if it was raised
-                 if result.get("ticket_id"):
+                 if result.get("ticket_id"): # Use .get for safety
                       st.write(f"Your Ticket ID is: {result['ticket_id']}")
+            else: # Handle case where handle_query returns None or unexpected
+                 st.error("An error occurred while processing your query.")
 
         else:
             st.warning("Please enter a query.")
@@ -624,7 +892,7 @@ def user_page():
     st.write("---")
 
     st.header("My Tickets")
-    st.write(view_my_tickets(user_email)) # Directly display returned string
+    st.text(view_my_tickets(user_email)) # Directly display returned string
 
     st.write("---")
 
@@ -655,7 +923,7 @@ def user_page():
 
 def admin_page():
     # Add checks for session state variables
-    if st.session_state.get("authenticated") is not True or st.session_state.get("user_email") != ADMIN_EMAIL:
+    if st.session_state.get("authenticated") is not True or st.session_state.get("user_email") is None or st.session_state.get("user_email") != ADMIN_EMAIL:
         st.warning("Please log in as the admin to access this page.")
         if st.button("Go to Login", key="admin_go_to_login"):
             st.session_state["page"] = "login"
@@ -702,7 +970,8 @@ def admin_page():
 
     st.header("Assign Ticket")
     assign_ticket_id = st.text_input("Ticket ID to Assign", key="assign_ticket_id_input") # Added a key
-    all_agent_names = [agent["name"] for agents in category_agents.values() for agent in agents]
+    all_agents = get_all_agents() # Get agents from DB
+    all_agent_names = [agent.get("name") for agent in all_agents if agent.get("name")] # Get agent names safely
     new_agent = st.selectbox("Assign Agent", all_agent_names, key="new_agent_select") # Added a key
     if st.button("Assign Ticket", key="assign_ticket_button"): # Added a key
         if assign_ticket_id and new_agent:
