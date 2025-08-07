@@ -19,9 +19,32 @@ from io import StringIO
 # genai.configure(api_key=GOOGLE_API_KEY)
 # Assuming API key is set elsewhere or using a placeholder for local testing
 
-# --- User Registration and Authentication ---
-users_db = {} # In-memory storage for demonstration
+# --- Initialize Session State for Data Persistence ---
+# Initialize users_db and tickets_db in session_state
+if "users_db" not in st.session_state:
+    st.session_state["users_db"] = {}
+if "tickets_db" not in st.session_state:
+    st.session_state["tickets_db"] = {}
+if "category_agents" not in st.session_state:
+     st.session_state["category_agents"] = {
+        "shipping": [{"name": "Agent_A", "workload": 0, "available": True, "skills": ["shipping", "tracking"]}, {"name": "Agent_E", "workload": 0, "available": True, "skills": ["shipping"]}], # Added skills
+        "refund": [{"name": "Agent_B", "workload": 0, "available": True, "skills": ["refund", "returns"]}, {"name": "Agent_F", "workload": 0, "available": True, "skills": ["refund"]}], # Added skills
+        "login": [{"name": "Agent_C", "workload": 0, "available": True, "skills": ["login", "account management"]}, {"name": "Agent_G", "workload": 0, "available": True, "skills": ["login"]}], # Added skills
+        "cancellation": [{"name": "Agent_D", "workload": 0, "available": True, "skills": ["cancellation"]}, {"name": "Agent_H", "workload": 0, "available": True, "skills": ["cancellation"]}], # Added skills
+        "default": [{"name": "Agent_X", "workload": 0, "available": True, "skills": ["general support"]}, {"name": "Agent_Y", "workload": 0, "available": True, "skills": ["general support"]}] # Added skills
+    }
+if "agent_indices" not in st.session_state:
+     st.session_state["agent_indices"] = {category: 0 for category in st.session_state["category_agents"]}
 
+
+# Use the databases from session state
+users_db = st.session_state["users_db"]
+tickets_db = st.session_state["tickets_db"]
+category_agents = st.session_state["category_agents"]
+agent_indices = st.session_state["agent_indices"]
+
+
+# --- User Registration and Authentication ---
 def register_user(email, password):
     if email in users_db:
         return False, "Email already exists."
@@ -69,18 +92,6 @@ def authenticate_user(email, password):
 
 
 # --- AI-Powered Ticketing System ---
-tickets_db = {}
-
-category_agents = {
-    "shipping": [{"name": "Agent_A", "workload": 0, "available": True, "skills": ["shipping", "tracking"]}, {"name": "Agent_E", "workload": 0, "available": True, "skills": ["shipping"]}], # Added skills
-    "refund": [{"name": "Agent_B", "workload": 0, "available": True, "skills": ["refund", "returns"]}, {"name": "Agent_F", "workload": 0, "available": True, "skills": ["refund"]}], # Added skills
-    "login": [{"name": "Agent_C", "workload": 0, "available": True, "skills": ["login", "account management"]}, {"name": "Agent_G", "workload": 0, "available": True, "skills": ["login"]}], # Added skills
-    "cancellation": [{"name": "Agent_D", "workload": 0, "available": True, "skills": ["cancellation"]}, {"name": "Agent_H", "workload": 0, "available": True, "skills": ["cancellation"]}], # Added skills
-    "default": [{"name": "Agent_X", "workload": 0, "available": True, "skills": ["general support"]}, {"name": "Agent_Y", "workload": 0, "available": True, "skills": ["general support"]}] # Added skills
-}
-
-agent_indices = {category: 0 for category in category_agents}
-
 
 def categorize_query(query):
     query_lower = query.lower()
@@ -663,7 +674,7 @@ def admin_page():
 
     st.header("Assign Ticket")
     assign_ticket_id = st.text_input("Ticket ID to Assign", key="assign_ticket_id_input") # Added a key
-    all_agent_names = [agent for agents in category_agents.values() for agent in agents]
+    all_agent_names = [agent["name"] for agents in category_agents.values() for agent in agents]
     new_agent = st.selectbox("Assign Agent", all_agent_names, key="new_agent_select") # Added a key
     if st.button("Assign Ticket", key="assign_ticket_button"): # Added a key
         if assign_ticket_id and new_agent:
