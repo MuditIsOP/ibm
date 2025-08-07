@@ -10,6 +10,9 @@ import google.generativeai as genai
 import sys
 from io import StringIO
 import sqlite3 # Import the sqlite3 library
+import pandas as pd # Import pandas for CSV export
+import smtplib # Import smtplib for sending emails
+import ssl # Import ssl for secure connection
 
 
 # Configure Generative AI (replace with your API key or use secrets manager)
@@ -614,21 +617,8 @@ def admin_view_all_tickets():
         tickets = [dict(row) for row in cursor.fetchall()] # Convert Row to dict for consistency
 
         if not tickets:
-            return "🙁 No tickets found in the database."
+            return [] # Return an empty list instead of a string when no tickets are found
 
-        output = "📋 All Tickets:\n"
-        for ticket_info in tickets: # Iterate directly over the list of dictionaries
-            output += "-" * 20 + "\n"
-            output += f"🎫 Ticket ID: {ticket_info.get('ticket_id', 'N/A')}\n" # Use lowercase key 'ticket_id'
-            output += f"Query: {ticket_info.get('query', 'N/A')}\n" # Use lowercase key 'query'
-            output += f"Status: {ticket_info.get('status', 'N/A')}\n" # Use lowercase key 'status'
-            output += f"Category: {ticket_info.get('category', 'N/A')}\n"
-            output += f"Priority: {ticket_info.get('priority', 'N/A')}\n"
-            output += f"Assigned to: {ticket_info.get('assigned_to', 'N/A')}\n"
-            output += f"Timestamp: {ticket_info.get('timestamp', 'N/A')}\n"
-            output += f"User Email: {ticket_info.get('user_email', 'N/A')}\n"
-            output += f"Feedback: {ticket_info.get('feedback', 'N/A')}\n"
-        output += "-" * 20 + "\n"
         return tickets # Return the list of dictionaries
     except sqlite3.Error as e:
         print(f"Database error viewing all tickets: {e}")
@@ -653,7 +643,7 @@ def admin_update_ticket_status(ticket_id, new_status):
             print(f"{message}") # Keep print for logging
             email = ticket.get('user_email')
             if email and old_status != new_status: # Only notify if status actually changed
-                send_notification(email, f"Your ticket status has been updated to {new_status}.")
+                send_notification(email, f"Your ticket status for ID {ticket_id} has been updated to {new_status}.") # Include ticket ID in notification
                 automated_response(ticket_id, new_status)
             return True, message
         else:
@@ -707,7 +697,7 @@ def admin_view_agent_workload():
         return "🙁 No agents found or an error occurred retrieving agent data."
 
     # Corrected iteration and access - ensure 'agent_dict' is treated as a dictionary
-    for agent_dict in agents: # Variable name already correctly suggests it's a dictionary
+    for agent_dict in agents:
         # Access name and workload using dictionary keys, with .get for safety
         agent_name = agent_dict.get('name', 'N/A')
         agent_workload = agent_dict.get('workload', 'N/A')
@@ -719,8 +709,56 @@ def admin_view_agent_workload():
 # In a real system, this would involve sending emails, in-app notifications, etc.
 # For this implementation, we'll just add print statements as placeholders.
 
-def send_notification(email, message): # Changed user to email
-    print(f"\n🔔 Notification for {email}: {message}") # Changed user to email
+def send_notification(email, message):
+    # Replace with actual email sending logic using smtplib
+
+    # --- !!! IMPORTANT !!! ---
+    # For security, store your email and password in Colab Secrets!
+    # Add secrets named 'SENDER_EMAIL' and 'SENDER_EMAIL_PASSWORD' (or App Password)
+    # --- !!! IMPORTANT !!! ---
+
+    sender_email =  "mudit8sharma@bbdu.ac.in"# Get sender email from secrets
+    sender_password = "5Ms@11535" # Get sender password from secrets
+    receiver_email = email # The user's email address
+
+    if not sender_email or not sender_password:
+        print(f"\n⚠️ Cannot send email notification to {receiver_email}: Sender email credentials not found in Colab Secrets.")
+        print(f"🔔 Placeholder Notification for {receiver_email}: {message}") # Fallback to print placeholder
+        return # Exit if credentials are not set
+
+    # Using Gmail SMTP server as an example
+    smtp_server = "smtp.gmail.com"
+    port = 587  # For starttls
+
+    # Create a secure SSL context
+    context = ssl.create_default_context()
+
+    try:
+        # Connect to the SMTP server
+        server = smtplib.SMTP(smtp_server, port)
+        server.ehlo()  # Can be omitted
+        server.starttls(context=context)  # Secure the connection
+        server.ehlo()  # Can be omitted
+        server.login(sender_email, sender_password)
+
+        # Create the email message
+        subject = "Your Ticket Status Update"
+        body = message # Use the message passed to the function
+        email_text = f"Subject: {subject}\n\n{body}"
+
+        # Send the email
+        server.sendmail(sender_email, receiver_email, email_text)
+        print(f"\n✅ Email notification sent to {receiver_email}: {message}") # Confirmation print
+
+    except Exception as e:
+        # Print error if email sending fails
+        print(f"\n❌ Failed to send email notification to {receiver_email}: {e}")
+        print(f"🔔 Placeholder Notification for {receiver_email}: {message}") # Fallback to print placeholder
+    finally:
+        # Quit the SMTP server
+        if 'server' in locals() and server:
+             server.quit()
+
 
 def automated_response(ticket_id, status):
     print(f"\n🤖 Automated Response for Ticket {ticket_id}: Your ticket status has been updated to {status}.")
@@ -730,6 +768,26 @@ def admin_update_ticket_status_with_notification(ticket_id, new_status):
     # This function is essentially the same as admin_update_ticket_status now,
     # as notifications are integrated there. Keeping for clarity.
     return admin_update_ticket_status(ticket_id, new_status)
+
+# --- Export Ticket History (New Function) ---
+def export_tickets_to_csv():
+    conn = None
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        # Read SQL query into a pandas DataFrame
+        df = pd.read_sql_query("SELECT * FROM tickets", conn)
+        # Export DataFrame to CSV
+        csv_data = df.to_csv(index=False)
+        return csv_data
+    except sqlite3.Error as e:
+        print(f"Database error during CSV export: {e}")
+        return None # Indicate failure
+    except Exception as e:
+        print(f"Error during CSV export: {e}")
+        return None # Indicate failure
+    finally:
+        if conn:
+            conn.close()
 
 
 ADMIN_EMAIL = "admin@test.com"
@@ -1029,15 +1087,64 @@ def admin_page():
     st.write("---")
 
     st.header("Agent Workload")
-    st.text(admin_view_agent_workload()) # Directly display returned string
+    # Ensure that admin_view_agent_workload returns a string
+    st.text(admin_view_agent_workload())
 
 
 # --- Notifications and Automated Responses (Conceptual) ---
 # In a real system, this would involve sending emails, in-app notifications, etc.
 # For this implementation, we'll just add print statements as placeholders.
 
-def send_notification(email, message): # Changed user to email
-    print(f"\n🔔 Notification for {email}: {message}") # Changed user to email
+def send_notification(email, message):
+    # Replace with actual email sending logic using smtplib
+
+    # --- !!! IMPORTANT !!! ---
+    # For security, store your email and password in Colab Secrets!
+    # Add secrets named 'SENDER_EMAIL' and 'SENDER_EMAIL_PASSWORD' (or App Password)
+    # --- !!! IMPORTANT !!! ---
+
+    sender_email = userdata.get('SENDER_EMAIL') # Get sender email from secrets
+    sender_password = userdata.get('SENDER_EMAIL_PASSWORD') # Get sender password from secrets
+    receiver_email = email # The user's email address
+
+    if not sender_email or not sender_password:
+        print(f"\n⚠️ Cannot send email notification to {receiver_email}: Sender email credentials not found in Colab Secrets.")
+        print(f"🔔 Placeholder Notification for {receiver_email}: {message}") # Fallback to print placeholder
+        return # Exit if credentials are not set
+
+    # Using Gmail SMTP server as an example
+    smtp_server = "smtp.gmail.com"
+    port = 587  # For starttls
+
+    # Create a secure SSL context
+    context = ssl.create_default_context()
+
+    try:
+        # Connect to the SMTP server
+        server = smtplib.SMTP(smtp_server, port)
+        server.ehlo()  # Can be omitted
+        server.starttls(context=context)  # Secure the connection
+        server.ehlo()  # Can be omitted
+        server.login(sender_email, sender_password)
+
+        # Create the email message
+        subject = "Your Ticket Status Update"
+        body = message # Use the message passed to the function
+        email_text = f"Subject: {subject}\n\n{body}"
+
+        # Send the email
+        server.sendmail(sender_email, receiver_email, email_text)
+        print(f"\n✅ Email notification sent to {receiver_email}: {message}") # Confirmation print
+
+    except Exception as e:
+        # Print error if email sending fails
+        print(f"\n❌ Failed to send email notification to {receiver_email}: {e}")
+        print(f"🔔 Placeholder Notification for {receiver_email}: {message}") # Fallback to print placeholder
+    finally:
+        # Quit the SMTP server
+        if 'server' in locals() and server:
+             server.quit()
+
 
 def automated_response(ticket_id, status):
     print(f"\n🤖 Automated Response for Ticket {ticket_id}: Your ticket status has been updated to {status}.")
@@ -1047,6 +1154,26 @@ def admin_update_ticket_status_with_notification(ticket_id, new_status):
     # This function is essentially the same as admin_update_ticket_status now,
     # as notifications are integrated there. Keeping for clarity.
     return admin_update_ticket_status(ticket_id, new_status)
+
+# --- Export Ticket History (New Function) ---
+def export_tickets_to_csv():
+    conn = None
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        # Read SQL query into a pandas DataFrame
+        df = pd.read_sql_query("SELECT * FROM tickets", conn)
+        # Export DataFrame to CSV
+        csv_data = df.to_csv(index=False)
+        return csv_data
+    except sqlite3.Error as e:
+        print(f"Database error during CSV export: {e}")
+        return None # Indicate failure
+    except Exception as e:
+        print(f"Error during CSV export: {e}")
+        return None # Indicate failure
+    finally:
+        if conn:
+            conn.close()
 
 
 ADMIN_EMAIL = "admin@test.com"
