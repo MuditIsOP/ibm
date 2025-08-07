@@ -15,7 +15,7 @@ import sqlite3 # Import the sqlite3 library
 # genai.configure(api_key="YOUR_API_KEY")
 # Or use secrets manager:
 # GOOGLE_API_KEY=userdata.get('GOOGLE_API_KEY')
-genai.configure(api_key=AIzaSyA0yhWlDPhQImryw6RqK21TrXEFMyZdF1k)
+genai.configure(api_key="AIzaSyA0yhWlDPhQImryw6RqK21TrXEFMyZdF1k")
 # Assuming API key is set elsewhere or using a placeholder for local testing
 
 
