@@ -16,8 +16,8 @@ from io import StringIO
 # Or use secrets manager:
 # from google.colab import userdata
 # GOOGLE_API_KEY=userdata.get('GOOGLE_API_KEY')
-# genai.configure(api_key=GOOGLE_API_KEY)
-# Assuming API key is set elsewhere or using a placeholder for local testing
+# genai.configure(api_key=GOOGLE_APIKEY) # Ensure this is correctly configured elsewhere
+
 
 # --- Initialize Session State for Data Persistence ---
 # Initialize users_db and tickets_db in session_state
@@ -110,8 +110,22 @@ def categorize_query(query):
 def ask_gemini(prompt):
     # This is a mock implementation if genai is not configured or fails
     # print("Mock Gemini call:", prompt[:100] + "...")
-    if 'genai' not in sys.modules or (hasattr(genai, 'configure') and genai.configure().api_key == "DUMMY_API_KEY"):
-        # print("Using dummy ask_gemini function.")
+    try:
+        # Attempt to get the real API key from secrets
+        api_key = userdata.get('GOOGLE_API_KEY')
+        if api_key is None:
+             raise ValueError("API key not found in secrets.")
+
+        # Re-configure genai with the actual API key if it's not already configured
+        # This handles cases where the script might rerun without the secrets being re-read at the top level
+        current_config = genai.configure()
+        if not hasattr(current_config, 'api_key') or current_config.api_key != api_key:
+             genai.configure(api_key=api_key)
+
+
+    except Exception as e:
+        # If API key is not available or genai configuration fails, use mock
+        # print(f"Warning: Gemini API not configured ({e}). Using mock function.")
         if "sentiment and urgency" in prompt:
             if "immediately" in prompt:
                 return "Priority: High"
@@ -119,38 +133,22 @@ def ask_gemini(prompt):
                  return "Priority: Medium"
             else:
                 return "Priority: Low"
-        elif "Using only the information provided" in prompt:
-            # Simple keyword-based mock response for document retrieval
-            if "shipping" in prompt and "business days" in prompt:
-                return "Your order will typically be shipped within 3-5 business days after confirmation."
-            elif "track my shipment" in prompt and "tracking link" in prompt:
-                return "You can track your shipment using the tracking link sent to your registered email or phone."
-            elif "return policy" in prompt and "30 days" in prompt:
-                return "You can return items within 30 days of delivery if they are in original condition."
-            elif "initiate a return" in prompt and "orders page" in prompt:
-                return "To initiate a return, please visit your orders page and select the item you wish to return."
-            elif "forgot my password" in prompt and "Forgot Password" in prompt:
-                 return "Click on 'Forgot Password' on the login page and follow the instructions to reset your password."
-            elif "change my account details" in prompt and "profile settings" in prompt:
-                return "You can update your account details by navigating to your profile settings after logging in."
-            elif "cancel my order" in prompt and "within 2 hours" in prompt:
-                 return "Orders can be cancelled within 2 hours of placement before processing begins."
-            elif "cancel my order after it is shipped" in prompt and "cannot be cancelled" in prompt:
-                 return "Once shipped, orders cannot be cancelled but can be returned upon delivery."
-            elif "not receive any updates" in prompt and "spam folder" in prompt:
-                 return "Please check your spam folder or contact customer support for updates."
-            elif "contact customer support" in prompt and "chatbot, email, or phone number" in prompt:
-                 return "You can contact customer support via the chatbot, email, or phone number listed on our Contact Us page."
-            else:
-                 return "I cannot find the answer in the provided document."
+        elif "Based on the provided FAQs, answer the user query" in prompt:
+             # Simple keyword matching mock for RAG prompt
+             for doc in docs:
+                 if any(word.lower() in prompt.lower() for word in doc.split()[:5]): # Very basic mock matching
+                      return "ANSWER: " + doc
+             return "NO_ANSWER" # Indicate no answer found in mock
         return "Mock response: Could not process the request."
+
+
     # Real Gemini call
     try:
         model = genai.GenerativeModel("gemini-2.5-pro")
         response = model.generate_content(prompt)
         return response.text
     except Exception as e:
-        print(f"Error during Gemini API call: {e}")
+        print(f"Error during real Gemini API call: {e}")
         return "Error: Could not get response from AI model."
 
 
@@ -242,47 +240,75 @@ docs = [
     "How do I contact customer support? You can contact customer support via the chatbot, email, or phone number listed on our Contact Us page."
 ]
 
-# Create TF-IDF embeddings
+# Create TF-IDF embeddings (Still useful for potential future enhancements or fallback)
 vectorizer = TfidfVectorizer()
 doc_vectors = vectorizer.fit_transform(docs).toarray()
 
-# Setup FAISS index
+# Setup FAISS index (Still useful for potential future enhancements or fallback)
 dimension = doc_vectors.shape[1]
 index = faiss.IndexFlatL2(dimension)
 index.add(np.array(doc_vectors).astype("float32"))
 
 
 def retrieve_answer_from_docs(user_query):
+    # This function is less critical now as Gemini handles the RAG logic
+    # but can be kept for potential future use or as a fallback.
     query_vec = vectorizer.transform([user_query]).toarray().astype("float32")
     D, I = index.search(query_vec, k=1)
-    # Lower the threshold slightly for better matching in this example
-    if D[0][0] > 0.6:  # adjusted threshold (lowered from 0.8 to 0.6)
+    # Threshold can still be relevant if this function is used
+    if D[0][0] > 0.6:
         return None
     return docs[I[0][0]]
 
 
 def handle_query(user_query, email=None): # Changed username to email
-    relevant_doc = retrieve_answer_from_docs(user_query)
-    ticket_id = None
+    # Comprehensive prompt for Gemini to act as RAG
+    prompt = f"""You are a helpful support assistant for a complaint management system.
+You have access to a list of frequently asked questions (FAQs) and their answers.
+Your primary goal is to answer the user's query based *only* on the information available in the provided FAQs.
+If you find a relevant FAQ that directly addresses the user's query, provide the answer from the FAQ.
+If the user's query is not covered by any of the provided FAQs, clearly state that you cannot find the answer in the FAQs and indicate that a ticket needs to be raised.
 
-    if relevant_doc:
-        # Refined prompt to emphasize using ONLY the provided document
-        prompt = f"""You are a helpful and concise support assistant. Using only the information provided in the following document, answer the user's query. If the document does not contain enough information to answer the query, please state that you cannot find the answer in the provided document.
+Here are the available FAQs:
+{'- '.join(docs)}
 
-Document: {relevant_doc}
-Query: {user_query}
-Answer:"""
+User Query: {user_query}
+
+Based *only* on the FAQs above:
+If you can answer the query, provide the answer starting with "ANSWER: ".
+If you cannot answer the query based on the FAQs, respond with "NO_ANSWER".
+"""
+
+    try:
         response = ask_gemini(prompt)
-        # print(f"✅ Answer: {response}") # Remove print for Streamlit
-        return {"resolved": True, "answer": response, "ticket_id": None}
-    else:
-        if email: # Changed username to email
-            ticket_id = raise_ticket(user_query, email) # Pass email
-            # print(f"🙁 Could not resolve query. Ticket Raised: {ticket_id}") # Remove print for Streamlit
-            return {"resolved": False, "ticket_id": ticket_id}
+        response_text = response.strip()
+
+        if response_text.startswith("ANSWER:"):
+            answer = response_text.replace("ANSWER:", "").strip()
+            return {"resolved": True, "answer": answer, "ticket_id": None}
+        elif response_text == "NO_ANSWER":
+             if email: # Changed username to email
+                ticket_id = raise_ticket(user_query, email) # Pass email
+                return {"resolved": False, "ticket_id": ticket_id, "message": f"Could not resolve query from FAQs. Ticket Raised: {ticket_id}"}
+             else:
+                 return {"resolved": False, "ticket_id": None, "message": "Could not resolve query from FAQs. Please provide an email to raise a ticket."}
         else:
-             # print("🙁 Could not resolve query. Please provide an email to raise a ticket.") # Remove print for Streamlit
-             return {"resolved": False, "ticket_id": None, "message": "Please provide an email to raise a ticket."} # Added message
+             # Handle unexpected responses from Gemini
+             print(f"Warning: Unexpected response from Gemini: {response_text}")
+             if email:
+                  ticket_id = raise_ticket(user_query, email)
+                  return {"resolved": False, "ticket_id": ticket_id, "message": f"Could not process response from AI. Ticket Raised: {ticket_id}"}
+             else:
+                 return {"resolved": False, "ticket_id": None, "message": "Could not process response from AI. Please provide an email to raise a ticket."}
+
+
+    except Exception as e:
+        print(f"Error handling query with Gemini prompt: {e}")
+        if email:
+             ticket_id = raise_ticket(user_query, email)
+             return {"resolved": False, "ticket_id": ticket_id, "message": f"An error occurred while processing your query. Ticket Raised: {ticket_id}"}
+        else:
+             return {"resolved": False, "ticket_id": None, "message": "An error occurred while processing your query. Please provide an email to raise a ticket."}
 
 
 # --- Real-time Complaint Status Tracking ---
@@ -303,7 +329,7 @@ def view_my_tickets(email): # Changed username to email
         return f"🙁 No tickets found for user: {email}" # Changed username to email
 
     output = f"📋 Your Tickets ({email}):\n" # Changed username to email
-    for ticket_id, ticket_info in user_tickets.items():
+    for ticket_id, ticket_info in user_db.items():
         output += "-" * 20 + "\n"
         output += f"🎫 Ticket ID: {ticket_id}\n"
         output += f"Query: {ticket_info.get('Query', 'N/A')}\n"
@@ -586,10 +612,12 @@ def user_page():
             if result["resolved"]:
                 st.success(f"Answer: {result['answer']}")
             else:
+                 # Display message returned by handle_query for NO_ANSWER or errors
+                 st.info(result.get("message", "Could not resolve query. Ticket might have been raised."))
+                 # You might want to explicitly show the ticket ID if it was raised
                  if result.get("ticket_id"):
-                    st.info(f"Could not resolve query. Ticket Raised: {result['ticket_id']}")
-                 else:
-                     st.warning(result.get("message", "Could not resolve query."))
+                      st.write(f"Your Ticket ID is: {result['ticket_id']}")
+
         else:
             st.warning("Please enter a query.")
 
