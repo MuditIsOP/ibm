@@ -481,7 +481,7 @@ def login_page():
                 st.session_state["page"] = "admin"
             else:
                 st.session_state["page"] = "user"
-            st.experimental_rerun() # Rerun to navigate
+            st.rerun() # Changed from st.experimental_rerun() to st.rerun()
         else:
             st.error(message)
 
@@ -495,8 +495,7 @@ def user_page():
     if st.session_state.get("authenticated") is not True or st.session_state.get("user_email") is None:
         st.warning("Please log in to access this page.")
         if st.button("Go to Login", key="user_go_to_login"):
-            st.session_state["page"] = "login"
-            st.experimental_rerun()
+            st.rerun() # Changed from st.experimental_rerun() to st.rerun()
         return
 
     user_email = st.session_state["user_email"]
@@ -505,7 +504,7 @@ def user_page():
          st.warning("Admins cannot access the user page.")
          if st.button("Go to Admin Dashboard", key="user_go_to_admin"):
               st.session_state["page"] = "admin"
-              st.experimental_rerun()
+              st.rerun() # Changed from st.experimental_rerun() to st.rerun()
          return
 
 
@@ -516,7 +515,7 @@ def user_page():
         st.session_state["authenticated"] = False
         st.session_state["user_email"] = None
         st.session_state["page"] = "login"
-        st.experimental_rerun()
+        st.rerun() # Changed from st.experimental_rerun() to st.rerun()
 
     # --- Placeholder for Notification Display ---
     # In a full implementation, this area could display recent notifications
@@ -584,7 +583,7 @@ def admin_page():
         st.warning("Please log in as the admin to access this page.")
         if st.button("Go to Login", key="admin_go_to_login"):
             st.session_state["page"] = "login"
-            st.experimental_rerun()
+            st.rerun() # Changed from st.experimental_rerun() to st.rerun()
         return
 
 
@@ -595,7 +594,7 @@ def admin_page():
         st.session_state["authenticated"] = False
         st.session_state["user_email"] = None
         st.session_state["page"] = "login"
-        st.experimental_rerun()
+        st.rerun() # Changed from st.experimental_rerun() to st.rerun()
 
     # --- Placeholder for Admin Notifications/Logs ---
     # Admin might need a different type of notification area,
@@ -627,7 +626,7 @@ def admin_page():
 
     st.header("Assign Ticket")
     assign_ticket_id = st.text_input("Ticket ID to Assign", key="assign_ticket_id_input") # Added a key
-    all_agent_names = [agent["name"] for agents in category_agents.values() for agent in agents]
+    all_agent_names = [agent for agents in category_agents.values() for agent in agents]
     new_agent = st.selectbox("Assign Agent", all_agent_names, key="new_agent_select") # Added a key
     if st.button("Assign Ticket", key="assign_ticket_button"): # Added a key
         if assign_ticket_id and new_agent:
@@ -656,7 +655,7 @@ def main_app():
         admin_page()
     else: # Default to login page if state is not set or invalid
         st.session_state["page"] = "login"
-        st.experimental_rerun()
+        st.rerun() # Changed from st.experimental_rerun() to st.rerun()
 
 # Run the main app logic
 if __name__ == "__main__":
