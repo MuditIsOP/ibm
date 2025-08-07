@@ -1,6 +1,4 @@
 import streamlit as st
-
-# GitHub Dark Mode Styling with subtle animations
 st.markdown("""
     <style>
     html, body, .stApp {
@@ -64,7 +62,6 @@ st.markdown("""
 
 import streamlit as st
 
-# GitHub Dark Mode Styling
 st.markdown("""
     <style>
     .main {
@@ -135,7 +132,6 @@ def init_db():
             )
         ''')
 
-        # Create tickets table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS tickets (
                 ticket_id TEXT PRIMARY KEY,
@@ -152,7 +148,6 @@ def init_db():
             )
         ''')
 
-        # Create agents table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS agents (
                 name TEXT PRIMARY KEY,
@@ -163,7 +158,6 @@ def init_db():
             )
         ''')
 
-        # Commit changes
         conn.commit()
     except sqlite3.Error as e:
         print(f"Database error during initialization: {e}")
@@ -201,7 +195,7 @@ def register_user(email, password):
         )
 
         cursor.execute('INSERT INTO users (email, password_hash, salt, verified) VALUES (?, ?, ?, ?)',
-                       (email, hashed_password, salt, True)) # Automatically verified
+                       (email, hashed_password, salt, True))
         conn.commit()
 
         return True, "User registered successfully."
