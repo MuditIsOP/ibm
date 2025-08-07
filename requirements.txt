@@ -4,3 +4,4 @@ numpy
 faiss-cpu
 google-generativeai
 smtplib
+ssl
