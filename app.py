@@ -10,7 +10,6 @@ import google.generativeai as genai
 import sys
 from io import StringIO
 import sqlite3 # Import the sqlite3 library
-from google.colab import userdata
 
 # Configure Generative AI (replace with your API key or use secrets manager)
 # genai.configure(api_key="YOUR_API_KEY")
