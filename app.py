@@ -280,7 +280,7 @@ def ask_gemini(prompt):
     # print("Mock Gemini call:", prompt[:100] + "...")
     try:
         # Attempt to get the real API key from secrets
-        api_key = userdata.get('GOOGLE_API_KEY')
+        api_key = "AIzaSyA0yhWlDPhQImryw6RqK21TrXEFMyZdF1k"
         if api_key is None:
              # print("Warning: Google API Key not found in secrets. Using mock Gemini.")
              raise ValueError("API key not found in secrets.")
