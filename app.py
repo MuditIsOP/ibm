@@ -10,12 +10,13 @@ import google.generativeai as genai
 import sys
 from io import StringIO
 import sqlite3 # Import the sqlite3 library
+from google.colab import userdata
 
 # Configure Generative AI (replace with your API key or use secrets manager)
 # genai.configure(api_key="YOUR_API_KEY")
 # Or use secrets manager:
 # GOOGLE_API_KEY=userdata.get('GOOGLE_API_KEY')
-genai.configure(api_key="AIzaSyA0yhWlDPhQImryw6RqK21TrXEFMyZdF1k")
+# genai.configure(api_key=GOOGLE_API_KEY)
 # Assuming API key is set elsewhere or using a placeholder for local testing
 
 
@@ -280,7 +281,7 @@ def ask_gemini(prompt):
     # print("Mock Gemini call:", prompt[:100] + "...")
     try:
         # Attempt to get the real API key from secrets
-        api_key = "AIzaSyA0yhWlDPhQImryw6RqK21TrXEFMyZdF1k"
+        api_key = userdata.get('GOOGLE_API_KEY')
         if api_key is None:
              # print("Warning: Google API Key not found in secrets. Using mock Gemini.")
              raise ValueError("API key not found in secrets.")
@@ -628,10 +629,10 @@ def admin_view_all_tickets():
             output += f"User Email: {ticket_info.get('user_email', 'N/A')}\n"
             output += f"Feedback: {ticket_info.get('feedback', 'N/A')}\n"
         output += "-" * 20 + "\n"
-        return output
+        return tickets # Return the list of dictionaries
     except sqlite3.Error as e:
         print(f"Database error viewing all tickets: {e}")
-        return "An error occurred while retrieving tickets."
+        return [] # Return empty list on error
     finally:
         if conn:
             conn.close()
@@ -919,6 +920,25 @@ def user_page():
         else:
             st.warning("Please enter both Ticket ID and feedback.")
 
+    st.write("---")
+
+    # --- Display FAQs ---
+    st.header("Frequently Asked Questions (FAQs)")
+    # Access the global docs list from the main script
+    global docs
+    if docs: # Check if docs list is not empty
+        for i, faq in enumerate(docs):
+            # Split FAQ into question and answer for better formatting if possible
+            if "?" in faq:
+                parts = faq.split("?", 1)
+                st.write(f"**Q{i+1}:** {parts[0]}?")
+                if len(parts) > 1 and parts[1].strip():
+                    st.write(f"**A{i+1}:** {parts[1].strip()}")
+            else:
+                 st.write(f"**Q{i+1}:** {faq}") # Display as is if no '?'
+    else:
+        st.info("No FAQs available at this time.")
+
 
 def admin_page():
     # Add checks for session state variables
@@ -948,35 +968,59 @@ def admin_page():
 
 
     st.header("All Tickets")
-    st.text(admin_view_all_tickets()) # Directly display returned string
+    # Get all tickets as a list of dictionaries
+    all_tickets = admin_view_all_tickets()
+
+    if not all_tickets:
+         st.info("🙁 No tickets found in the database.")
+    else:
+         # Display tickets in a more structured way (e.g., using st.dataframe or looping)
+         # For simplicity, let's loop and display
+         for ticket_info in all_tickets:
+              st.write(f"**Ticket ID:** {ticket_info.get('ticket_id', 'N/A')}")
+              st.write(f"**Query:** {ticket_info.get('query', 'N/A')}")
+              st.write(f"**Status:** {ticket_info.get('status', 'N/A')}")
+              st.write(f"**Category:** {ticket_info.get('category', 'N/A')}")
+              st.write(f"**Priority:** {ticket_info.get('priority', 'N/A')}")
+              st.write(f"**Assigned to:** {ticket_info.get('assigned_to', 'N/A')}")
+              st.write(f"**Timestamp:** {ticket_info.get('timestamp', 'N/A')}")
+              st.write(f"**User Email:** {ticket_info.get('user_email', 'N/A')}")
+              st.write(f"**Feedback:** {ticket_info.get('feedback', 'N/A')}")
+              st.write("---")
+
 
     st.write("---")
 
     st.header("Update Ticket Status")
-    update_ticket_id = st.text_input("Ticket ID to Update Status", key="update_ticket_id_input") # Added a key
-    new_status = st.selectbox("New Status", ["Pending", "In Progress", "Resolved", "Closed"], key="new_status_select") # Added a key
-    if st.button("Update Status", key="update_status_button"): # Added a key
-        if update_ticket_id and new_status:
-            success, message = admin_update_ticket_status_with_notification(update_ticket_id, new_status)
+    # Get ticket IDs for the dropdown
+    ticket_ids = [ticket.get('ticket_id', 'N/A') for ticket in all_tickets if ticket.get('ticket_id')]
+    selected_ticket_id = st.selectbox("Select Ticket ID to Update Status:", ticket_ids, key="update_ticket_id_select") # Changed to selectbox
+    new_status = st.selectbox("New Status", ["Pending", "In Progress", "Resolved", "Closed"], key="new_status_select")
+    if st.button("Update Status", key="update_status_button"):
+        if selected_ticket_id and new_status:
+            success, message = admin_update_ticket_status_with_notification(selected_ticket_id, new_status)
             if success:
                 st.success(message)
+                st.rerun() # Rerun to refresh the ticket list display
             else:
                 st.error(message)
         else:
-            st.warning("Please provide Ticket ID and select a status.")
+            st.warning("Please select a Ticket ID and status.")
+
 
     st.write("---")
 
     st.header("Assign Ticket")
-    assign_ticket_id = st.text_input("Ticket ID to Assign", key="assign_ticket_id_input") # Added a key
+    assign_ticket_id = st.text_input("Ticket ID to Assign", key="assign_ticket_id_input")
     all_agents = get_all_agents() # Get agents from DB
     all_agent_names = [agent.get("name") for agent in all_agents if agent.get("name")] # Get agent names safely
-    new_agent = st.selectbox("Assign Agent", all_agent_names, key="new_agent_select") # Added a key
-    if st.button("Assign Ticket", key="assign_ticket_button"): # Added a key
+    new_agent = st.selectbox("Assign Agent", all_agent_names, key="new_agent_select")
+    if st.button("Assign Ticket", key="assign_ticket_button"):
         if assign_ticket_id and new_agent:
             success, message = admin_assign_ticket(assign_ticket_id, new_agent)
             if success:
                 st.success(message)
+                st.rerun() # Rerun to refresh the ticket list display if needed (though assignment doesn't change the display format here)
             else:
                 st.error(message)
         else:
@@ -987,6 +1031,62 @@ def admin_page():
     st.header("Agent Workload")
     st.text(admin_view_agent_workload()) # Directly display returned string
 
+
+# --- Notifications and Automated Responses (Conceptual) ---
+# In a real system, this would involve sending emails, in-app notifications, etc.
+# For this implementation, we'll just add print statements as placeholders.
+
+def send_notification(email, message): # Changed user to email
+    print(f"\n🔔 Notification for {email}: {message}") # Changed user to email
+
+def automated_response(ticket_id, status):
+    print(f"\n🤖 Automated Response for Ticket {ticket_id}: Your ticket status has been updated to {status}.")
+
+# Example of integrating notifications into status update
+def admin_update_ticket_status_with_notification(ticket_id, new_status):
+    # This function is essentially the same as admin_update_ticket_status now,
+    # as notifications are integrated there. Keeping for clarity.
+    return admin_update_ticket_status(ticket_id, new_status)
+
+
+ADMIN_EMAIL = "admin@test.com"
+ADMIN_PASSWORD = "admin123"
+
+# Check if admin user exists in DB, register if not
+conn = None
+try:
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute('SELECT email FROM users WHERE email = ?', (ADMIN_EMAIL,))
+    admin_exists = cursor.fetchone()
+
+    if not admin_exists:
+        reg_success, message = register_user(ADMIN_EMAIL, ADMIN_PASSWORD)
+        if reg_success:
+            print(f"Admin user '{ADMIN_EMAIL}' registered successfully in DB.")
+            # Since register_user now auto-verifies in DB, no separate verification needed here.
+        else:
+            print(f"Failed to register admin user in DB: {message}")
+    else:
+        print(f"Admin user '{ADMIN_EMAIL}' already exists in DB.")
+        # Ensure admin user is marked as verified in DB if they already exist
+        cursor.execute('UPDATE users SET verified = ? WHERE email = ?', (True, ADMIN_EMAIL))
+        conn.commit()
+        print(f"Admin user '{ADMIN_EMAIL}' found and marked as verified in DB.")
+except sqlite3.Error as e:
+    print(f"Database error during admin user check/registration: {e}")
+finally:
+    if conn:
+        conn.close()
+
+
+# Initialize session state
+if "page" not in st.session_state:
+    st.session_state["page"] = "login"
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
+if "user_email" not in st.session_state:
+    st.session_state["user_email"] = None
 
 # --- Main App Logic ---
 # Using a function to encapsulate the main logic for better rerun handling
