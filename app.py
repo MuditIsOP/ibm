@@ -13,6 +13,7 @@ import sqlite3 # Import the sqlite3 library
 import pandas as pd # Import pandas for CSV export
 import smtplib # Import smtplib for sending emails
 import ssl # Import ssl for secure connection
+from google.colab import userdata # Ensure userdata is imported at the top
 
 
 # Configure Generative AI (replace with your API key or use secrets manager)
@@ -694,14 +695,21 @@ def admin_view_agent_workload():
     agents = get_all_agents() # Get agents from DB
     output = "📊 Agent Workload:\n"
     if not agents:
-        return "🙁 No agents found or an error occurred retrieving agent data."
+        output += "🙁 No agents found or an error occurred retrieving agent data."
+    else:
+        # Iterate directly over the list of dictionaries returned by get_all_agents()
+        for agent_dict in agents:
+            # Access name and workload using dictionary keys, with .get for safety
+            # This is the section that has repeatedly caused the TypeError
+            try:
+                agent_name = agent_dict.get('name', 'N/A')
+                agent_workload = agent_dict.get('workload', 'N/A')
+                output += f"- {agent_name}: {agent_workload} tickets\n"
+            except Exception as e:
+                 # Added extra error handling here to try and diagnose the issue if it persists
+                 print(f"Error processing agent_dict: {agent_dict} - {e}")
+                 output += f"- Error displaying agent data: {e}\n"
 
-    # Corrected iteration and access - ensure 'agent_dict' is treated as a dictionary
-    for agent_dict in agents:
-        # Access name and workload using dictionary keys, with .get for safety
-        agent_name = agent_dict.get('name', 'N/A')
-        agent_workload = agent_dict.get('workload', 'N/A')
-        output += f"- {agent_name}: {agent_workload} tickets\n"
     return output
 
 
@@ -717,7 +725,14 @@ def send_notification(email, message):
     # Add secrets named 'SENDER_EMAIL' and 'SENDER_EMAIL_PASSWORD' (or App Password)
     # --- !!! IMPORTANT !!! ---
 
-    sender_email =  "mudit8sharma@bbdu.ac.in"# Get sender email from secrets
+    # Ensure userdata is imported within the function scope for Streamlit reliability
+    # Also import smtplib and ssl here for local scope access
+    import smtplib
+    import ssl
+    from google.colab import userdata
+
+
+    sender_email = "mudit8sharma@bbdu.ac.in" # Get sender email from secrets
     sender_password = "5Ms@11535" # Get sender password from secrets
     receiver_email = email # The user's email address
 
@@ -1088,7 +1103,25 @@ def admin_page():
 
     st.header("Agent Workload")
     # Ensure that admin_view_agent_workload returns a string
-    st.text(admin_view_agent_workload())
+    # Re-attempting to fix the TypeError here by ensuring correct iteration and access
+    agents = get_all_agents() # Get agents from DB
+    output = "📊 Agent Workload:\n"
+    if not agents:
+        output += "🙁 No agents found or an error occurred retrieving agent data."
+    else:
+        # Iterate directly over the list of dictionaries returned by get_all_agents()
+        for agent_dict in agents:
+            # Access name and workload using dictionary keys, with .get for safety
+            # This is the section that has repeatedly caused the TypeError
+            try:
+                agent_name = agent_dict.get('name', 'N/A')
+                agent_workload = agent_dict.get('workload', 'N/A')
+                output += f"- {agent_name}: {agent_workload} tickets\n"
+            except Exception as e:
+                 # Added extra error handling here to try and diagnose the issue if it persists
+                 print(f"Error processing agent_dict: {agent_dict} - {e}")
+                 output += f"- Error displaying agent data: {e}\n"
+    st.text(output)
 
 
 # --- Notifications and Automated Responses (Conceptual) ---
@@ -1102,6 +1135,12 @@ def send_notification(email, message):
     # For security, store your email and password in Colab Secrets!
     # Add secrets named 'SENDER_EMAIL' and 'SENDER_EMAIL_PASSWORD' (or App Password)
     # --- !!! IMPORTANT !!! ---
+
+    # Ensure userdata, smtplib, and ssl are imported within the function scope for Streamlit reliability
+    import smtplib
+    import ssl
+    from google.colab import userdata
+
 
     sender_email = userdata.get('SENDER_EMAIL') # Get sender email from secrets
     sender_password = userdata.get('SENDER_EMAIL_PASSWORD') # Get sender password from secrets
