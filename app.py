@@ -285,7 +285,7 @@ def ask_gemini(prompt):
     # print("Mock Gemini call:", prompt[:100] + "...")
     try:
         # Attempt to get the real API key from secrets
-        api_key = "AIzaSyA0yhWlDPhQImryw6RqK21TrXEFMyZdF1k"
+        api_key = st.secrets["GOOGLE_API_KEY"]
         if api_key is None:
              # print("Warning: Google API Key not found in secrets. Using mock Gemini.")
              raise ValueError("API key not found in secrets.")
@@ -732,8 +732,8 @@ def send_notification(email, message):
   
 
 
-    sender_email = "mudit8sharma@bbdu.ac.in" # Get sender email from secrets
-    sender_password = "5Ms@11535" # Get sender password from secrets
+    sender_email = st.secrets["SENDER_EMAIL"] # Get sender email from secrets
+    sender_password = st.secrets["SENDER_EMAIL_PASSWORD"] # Get sender password from secrets
     receiver_email = email # The user's email address
 
     if not sender_email or not sender_password:
@@ -1142,8 +1142,8 @@ def send_notification(email, message):
     
 
 
-    sender_email = "mudit8sharma@gmail.com" # Get sender email from secrets
-    sender_password = "5Ms@11535" # Get sender password from secrets
+    sender_email = st.secrets["SENDER_EMAIL"] # Get sender email from secrets
+    sender_password = st.secrets["SENDER_EMAIL_PASSWORD"] # Get sender password from secrets
     receiver_email = email # The user's email address
 
     if not sender_email or not sender_password:
