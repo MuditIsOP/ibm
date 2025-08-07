@@ -13,7 +13,7 @@ import sqlite3 # Import the sqlite3 library
 import pandas as pd # Import pandas for CSV export
 import smtplib # Import smtplib for sending emails
 import ssl # Import ssl for secure connection
-from google.colab import userdata # Ensure userdata is imported at the top
+
 
 
 # Configure Generative AI (replace with your API key or use secrets manager)
@@ -729,7 +729,7 @@ def send_notification(email, message):
     # Also import smtplib and ssl here for local scope access
     import smtplib
     import ssl
-    from google.colab import userdata
+  
 
 
     sender_email = "mudit8sharma@bbdu.ac.in" # Get sender email from secrets
@@ -1139,11 +1139,11 @@ def send_notification(email, message):
     # Ensure userdata, smtplib, and ssl are imported within the function scope for Streamlit reliability
     import smtplib
     import ssl
-    from google.colab import userdata
+    
 
 
-    sender_email = userdata.get('SENDER_EMAIL') # Get sender email from secrets
-    sender_password = userdata.get('SENDER_EMAIL_PASSWORD') # Get sender password from secrets
+    sender_email = "mudit8sharma@gmail.com" # Get sender email from secrets
+    sender_password = "5Ms@11535" # Get sender password from secrets
     receiver_email = email # The user's email address
 
     if not sender_email or not sender_password:
