@@ -45,7 +45,8 @@ def register_user(email, password):
 def authenticate_user(email, password):
     user = users_db.get(email)
     if not user:
-        return False, "Invalid email or password."
+        # Modified error message for non-registered email
+        return False, "User not registered. Please register first."
 
     stored_salt = user["salt"]
     stored_hash = user["password_hash"]
@@ -62,7 +63,8 @@ def authenticate_user(email, password):
         #     return False, "Please verify your email."
         return True, "Authentication successful."
     else:
-        return False, "Invalid email or password."
+        return False, "Invalid email or password." # Keep this for wrong password
+
 
 # --- AI-Powered Ticketing System ---
 tickets_db = {}
@@ -486,8 +488,39 @@ def login_page():
             st.error(message)
 
     st.write("---")
-    # Placeholder for registration link (optional for this task)
-    st.write("Don't have an account? [Register Here](link_to_registration_page)") # Replace with actual link later
+    # Button to navigate to registration page
+    if st.button("Register Here", key="go_to_register"):
+        st.session_state["page"] = "register"
+        st.rerun()
+
+
+def registration_page():
+    st.title("Register for Complaint Management System")
+
+    new_email = st.text_input("Enter Email", key="register_email")
+    new_password = st.text_input("Enter Password", type="password", key="register_password")
+    confirm_password = st.text_input("Confirm Password", type="password", key="confirm_password")
+
+    if st.button("Register", key="register_button"):
+        if new_password == confirm_password:
+            reg_success, message = register_user(new_email, new_password)
+            if reg_success:
+                st.success(message)
+                # Optionally, automatically log in the user after registration
+                # st.session_state["authenticated"] = True
+                # st.session_state["user_email"] = new_email
+                # st.session_state["page"] = "user"
+                # st.rerun()
+            else:
+                st.error(message)
+        else:
+            st.error("Passwords do not match.")
+
+    st.write("---")
+    # Button to navigate back to login page
+    if st.button("Back to Login", key="back_to_login"):
+        st.session_state["page"] = "login"
+        st.rerun()
 
 
 def user_page():
@@ -495,7 +528,7 @@ def user_page():
     if st.session_state.get("authenticated") is not True or st.session_state.get("user_email") is None:
         st.warning("Please log in to access this page.")
         if st.button("Go to Login", key="user_go_to_login"):
-            st.rerun() # Changed from st.experimental_rerun() to st.rerun()
+            st.rerun()
         return
 
     user_email = st.session_state["user_email"]
@@ -504,7 +537,7 @@ def user_page():
          st.warning("Admins cannot access the user page.")
          if st.button("Go to Admin Dashboard", key="user_go_to_admin"):
               st.session_state["page"] = "admin"
-              st.rerun() # Changed from st.experimental_rerun() to st.rerun()
+              st.rerun()
          return
 
 
@@ -515,7 +548,7 @@ def user_page():
         st.session_state["authenticated"] = False
         st.session_state["user_email"] = None
         st.session_state["page"] = "login"
-        st.rerun() # Changed from st.experimental_rerun() to st.rerun()
+        st.rerun()
 
     # --- Placeholder for Notification Display ---
     # In a full implementation, this area could display recent notifications
@@ -583,7 +616,7 @@ def admin_page():
         st.warning("Please log in as the admin to access this page.")
         if st.button("Go to Login", key="admin_go_to_login"):
             st.session_state["page"] = "login"
-            st.rerun() # Changed from st.experimental_rerun() to st.rerun()
+            st.rerun()
         return
 
 
@@ -594,7 +627,7 @@ def admin_page():
         st.session_state["authenticated"] = False
         st.session_state["user_email"] = None
         st.session_state["page"] = "login"
-        st.rerun() # Changed from st.experimental_rerun() to st.rerun()
+        st.rerun()
 
     # --- Placeholder for Admin Notifications/Logs ---
     # Admin might need a different type of notification area,
@@ -626,7 +659,7 @@ def admin_page():
 
     st.header("Assign Ticket")
     assign_ticket_id = st.text_input("Ticket ID to Assign", key="assign_ticket_id_input") # Added a key
-    all_agent_names = [agent for agents in category_agents.values() for agent in agents]
+    all_agent_names = [agent["name"] for agents in category_agents.values() for agent in agents]
     new_agent = st.selectbox("Assign Agent", all_agent_names, key="new_agent_select") # Added a key
     if st.button("Assign Ticket", key="assign_ticket_button"): # Added a key
         if assign_ticket_id and new_agent:
@@ -649,13 +682,15 @@ def admin_page():
 def main_app():
     if st.session_state.get("page") == "login":
         login_page()
+    elif st.session_state.get("page") == "register":
+        registration_page()
     elif st.session_state.get("page") == "user":
         user_page()
     elif st.session_state.get("page") == "admin":
         admin_page()
     else: # Default to login page if state is not set or invalid
         st.session_state["page"] = "login"
-        st.rerun() # Changed from st.experimental_rerun() to st.rerun()
+        st.rerun()
 
 # Run the main app logic
 if __name__ == "__main__":
