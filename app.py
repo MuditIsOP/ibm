@@ -245,7 +245,7 @@ def retrieve_answer_from_docs(user_query):
     query_vec = vectorizer.transform([user_query]).toarray().astype("float32")
     D, I = index.search(query_vec, k=1)
     # Lower the threshold slightly for better matching in this example
-    if D[0][0] > 0.8:  # adjusted threshold
+    if D[0][0] > 0.6:  # adjusted threshold (lowered from 0.8 to 0.6)
         return None
     return docs[I[0][0]]
 
@@ -255,6 +255,7 @@ def handle_query(user_query, email=None): # Changed username to email
     ticket_id = None
 
     if relevant_doc:
+        # Refined prompt to emphasize using ONLY the provided document
         prompt = f"""You are a helpful and concise support assistant. Using only the information provided in the following document, answer the user's query. If the document does not contain enough information to answer the query, please state that you cannot find the answer in the provided document.
 
 Document: {relevant_doc}
@@ -662,7 +663,7 @@ def admin_page():
 
     st.header("Assign Ticket")
     assign_ticket_id = st.text_input("Ticket ID to Assign", key="assign_ticket_id_input") # Added a key
-    all_agent_names = [agent["name"] for agents in category_agents.values() for agent in agents]
+    all_agent_names = [agent for agents in category_agents.values() for agent in agents]
     new_agent = st.selectbox("Assign Agent", all_agent_names, key="new_agent_select") # Added a key
     if st.button("Assign Ticket", key="assign_ticket_button"): # Added a key
         if assign_ticket_id and new_agent:
