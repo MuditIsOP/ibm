@@ -37,10 +37,12 @@ def register_user(email, password):
     users_db[email] = {
         "password_hash": hashed_password,
         "salt": salt,
-        "verified": False,
-        "verification_token": os.urandom(16).hex()
+        # Immediately set verified to True as email verification is skipped
+        "verified": True,
+        "verification_token": None # No token needed if immediately verified
     }
-    return True, "User registered successfully. Please verify your email."
+    # Return the user data along with success status and message
+    return True, "User registered successfully.", users_db[email]
 
 def authenticate_user(email, password):
     user = users_db.get(email)
@@ -59,7 +61,7 @@ def authenticate_user(email, password):
     )
 
     if provided_password_hash == stored_hash:
-        # if not user["verified"]:
+        # if not user["verified"]: # Verification check is skipped as per requirement
         #     return False, "Please verify your email."
         return True, "Authentication successful."
     else:
@@ -437,7 +439,7 @@ ADMIN_PASSWORD = "admin123"
 
 # Check if admin user exists, register if not
 if ADMIN_EMAIL not in users_db:
-    reg_success, message = register_user(ADMIN_EMAIL, ADMIN_PASSWORD)
+    reg_success, message, _ = register_user(ADMIN_EMAIL, ADMIN_PASSWORD) # Capture the return values
     if reg_success:
         print(f"Admin user '{ADMIN_EMAIL}' registered successfully.")
         # Immediately verify the admin user as email verification is not implemented
@@ -503,14 +505,14 @@ def registration_page():
 
     if st.button("Register", key="register_button"):
         if new_password == confirm_password:
-            reg_success, message = register_user(new_email, new_password)
+            reg_success, message, registered_user_data = register_user(new_email, new_password) # Capture registered_user_data
             if reg_success:
                 st.success(message)
-                # Optionally, automatically log in the user after registration
-                # st.session_state["authenticated"] = True
-                # st.session_state["user_email"] = new_email
-                # st.session_state["page"] = "user"
-                # st.rerun()
+                # Automatically log in the user after registration
+                st.session_state["authenticated"] = True
+                st.session_state["user_email"] = new_email # Use the email entered
+                st.session_state["page"] = "user"
+                st.rerun()
             else:
                 st.error(message)
         else:
@@ -528,6 +530,7 @@ def user_page():
     if st.session_state.get("authenticated") is not True or st.session_state.get("user_email") is None:
         st.warning("Please log in to access this page.")
         if st.button("Go to Login", key="user_go_to_login"):
+            st.session_state["page"] = "login"
             st.rerun()
         return
 
