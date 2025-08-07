@@ -12,7 +12,7 @@ from io import StringIO
 # from transformers import pipeline # Removed transformers
 
 # Configure Generative AI (replace with your API key or use secrets manager)
-genai.configure(api_key="AIzaSyAvILu0GJ3qucUjn3MwrH33dSo1e5ksOww")
+# genai.configure(api_key="YOUR_API_KEY")
 # Or use secrets manager:
 # from google.colab import userdata
 # GOOGLE_API_KEY=userdata.get('GOOGLE_API_KEY')
@@ -77,8 +77,6 @@ category_agents = {
 
 agent_indices = {category: 0 for category in category_agents}
 
-# Load sentiment analysis model
-# sentiment_analyzer = pipeline("sentiment-analysis") # Removed transformers pipeline
 
 def categorize_query(query):
     query_lower = query.lower()
@@ -92,6 +90,54 @@ def categorize_query(query):
         return "cancellation"
     else:
         return "default"
+
+# Placeholder/Mock ask_gemini if not configured
+def ask_gemini(prompt):
+    # This is a mock implementation if genai is not configured or fails
+    # print("Mock Gemini call:", prompt[:100] + "...")
+    if 'genai' not in sys.modules or (hasattr(genai, 'configure') and genai.configure().api_key == "DUMMY_API_KEY"):
+        # print("Using dummy ask_gemini function.")
+        if "sentiment and urgency" in prompt:
+            if "immediately" in prompt:
+                return "Priority: High"
+            elif "unhappy" in prompt or "damaged" in prompt:
+                 return "Priority: Medium"
+            else:
+                return "Priority: Low"
+        elif "Using only the information provided" in prompt:
+            # Simple keyword-based mock response for document retrieval
+            if "shipping" in prompt and "business days" in prompt:
+                return "Your order will typically be shipped within 3-5 business days after confirmation."
+            elif "track my shipment" in prompt and "tracking link" in prompt:
+                return "You can track your shipment using the tracking link sent to your registered email or phone."
+            elif "return policy" in prompt and "30 days" in prompt:
+                return "You can return items within 30 days of delivery if they are in original condition."
+            elif "initiate a return" in prompt and "orders page" in prompt:
+                return "To initiate a return, please visit your orders page and select the item you wish to return."
+            elif "forgot my password" in prompt and "Forgot Password" in prompt:
+                 return "Click on 'Forgot Password' on the login page and follow the instructions to reset your password."
+            elif "change my account details" in prompt and "profile settings" in prompt:
+                return "You can update your account details by navigating to your profile settings after logging in."
+            elif "cancel my order" in prompt and "within 2 hours" in prompt:
+                 return "Orders can be cancelled within 2 hours of placement before processing begins."
+            elif "cancel my order after it is shipped" in prompt and "cannot be cancelled" in prompt:
+                 return "Once shipped, orders cannot be cancelled but can be returned upon delivery."
+            elif "not receive any updates" in prompt and "spam folder" in prompt:
+                 return "Please check your spam folder or contact customer support for updates."
+            elif "contact customer support" in prompt and "chatbot, email, or phone number" in prompt:
+                 return "You can contact customer support via the chatbot, email, or phone number listed on our Contact Us page."
+            else:
+                 return "I cannot find the answer in the provided document."
+        return "Mock response: Could not process the request."
+    # Real Gemini call
+    try:
+        model = genai.GenerativeModel("gemini-2.5-pro")
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        print(f"Error during Gemini API call: {e}")
+        return "Error: Could not get response from AI model."
+
 
 def determine_priority(query):
     # Use Gemini for sentiment and priority determination
@@ -114,8 +160,6 @@ Priority: Medium
 Query: {query}
 Priority:"""
     try:
-        # Ensure ask_gemini is available or mock it for testing without API key
-        # if 'ask_gemini' in globals():
         response = ask_gemini(prompt)
         # Attempt to extract priority from Gemini's response
         response_lower = response.strip().lower()
@@ -125,12 +169,9 @@ Priority:"""
             return "Medium"
         else:
             return "Low" # Default to Low if not explicitly High or Medium
-        # else:
-        #     print("Warning: ask_gemini function not available. Using default priority 'Low'.")
-        #     return "Low"
     except Exception as e:
-        # print(f"Error determining priority with Gemini: {e}")
-        return "Low" # Default to Low in case of error or missing Gemini function
+        print(f"Error determining priority with Gemini: {e}")
+        return "Low" # Default to Low in case of error
 
 
 def assign_agent(category, skills_required=None): # Modified to include skills
@@ -195,43 +236,6 @@ dimension = doc_vectors.shape[1]
 index = faiss.IndexFlatL2(dimension)
 index.add(np.array(doc_vectors).astype("float32"))
 
-# Placeholder/Mock ask_gemini if not configured
-def ask_gemini(prompt):
-    # This is a mock implementation if genai is not configured or fails
-    print("Mock Gemini call:", prompt[:100] + "...")
-    if "sentiment and urgency" in prompt:
-        if "immediately" in prompt:
-            return "Priority: High"
-        elif "unhappy" in prompt or "damaged" in prompt:
-             return "Priority: Medium"
-        else:
-            return "Priority: Low"
-    elif "Using only the information provided" in prompt:
-        # Simple keyword-based mock response for document retrieval
-        if "shipping" in prompt and "business days" in prompt:
-            return "Your order will typically be shipped within 3-5 business days after confirmation."
-        elif "track my shipment" in prompt and "tracking link" in prompt:
-            return "You can track your shipment using the tracking link sent to your registered email or phone."
-        elif "return policy" in prompt and "30 days" in prompt:
-            return "You can return items within 30 days of delivery if they are in original condition."
-        elif "initiate a return" in prompt and "orders page" in prompt:
-            return "To initiate a return, please visit your orders page and select the item you wish to return."
-        elif "forgot my password" in prompt and "Forgot Password" in prompt:
-             return "Click on 'Forgot Password' on the login page and follow the instructions to reset your password."
-        elif "change my account details" in prompt and "profile settings" in prompt:
-            return "You can update your account details by navigating to your profile settings after logging in."
-        elif "cancel my order" in prompt and "within 2 hours" in prompt:
-             return "Orders can be cancelled within 2 hours of placement before processing begins."
-        elif "cancel my order after it is shipped" in prompt and "cannot be cancelled" in prompt:
-             return "Once shipped, orders cannot be cancelled but can be returned upon delivery."
-        elif "not receive any updates" in prompt and "spam folder" in prompt:
-             return "Please check your spam folder or contact customer support for updates."
-        elif "contact customer support" in prompt and "chatbot, email, or phone number" in prompt:
-             return "You can contact customer support via the chatbot, email, or phone number listed on our Contact Us page."
-        else:
-             return "I cannot find the answer in the provided document."
-    return "Mock response: Could not process the request."
-
 
 def retrieve_answer_from_docs(user_query):
     query_vec = vectorizer.transform([user_query]).toarray().astype("float32")
@@ -253,16 +257,17 @@ Document: {relevant_doc}
 Query: {user_query}
 Answer:"""
         response = ask_gemini(prompt)
-        # print(f"✅ Answer: {response}") # Removed print for UI
+        # print(f"✅ Answer: {response}") # Remove print for Streamlit
         return {"resolved": True, "answer": response, "ticket_id": None}
     else:
         if email: # Changed username to email
             ticket_id = raise_ticket(user_query, email) # Pass email
-            # print(f"🙁 Could not resolve query. Ticket Raised: {ticket_id}") # Removed print for UI
+            # print(f"🙁 Could not resolve query. Ticket Raised: {ticket_id}") # Remove print for Streamlit
             return {"resolved": False, "ticket_id": ticket_id}
         else:
-             # print("🙁 Could not resolve query. Please provide an email to raise a ticket.") # Removed print for UI
-             return {"resolved": False, "ticket_id": None}
+             # print("🙁 Could not resolve query. Please provide an email to raise a ticket.") # Remove print for Streamlit
+             return {"resolved": False, "ticket_id": None, "message": "Please provide an email to raise a ticket."} # Added message
+
 
 # --- Real-time Complaint Status Tracking ---
 def get_ticket_by_id(ticket_id):
@@ -412,15 +417,17 @@ def admin_update_ticket_status_with_notification(ticket_id, new_status):
     if ticket:
         old_status = ticket.get('Status')
         ticket['Status'] = new_status
-        # print(f"✅ Status for Ticket ID {ticket_id} updated to: {new_status}") # Removed print for UI
+        message = f"Status for Ticket ID {ticket_id} updated to: {new_status}"
+        print(f"✅ {message}") # Keep print for logging
         email = ticket.get('user_email') # Changed user to user_email
         if email and old_status != new_status: # Only notify if status actually changed
             send_notification(email, f"Your ticket status has been updated to {new_status}.") # Pass email
             automated_response(ticket_id, new_status)
-        return True, f"✅ Status for Ticket ID {ticket_id} updated to: {new_status}"
+        return True, message
     else:
-        # print(f"❌ Ticket ID {ticket_id} not found.") # Removed print for UI
-        return False, f"❌ Ticket ID {ticket_id} not found."
+        message = f"Ticket ID {ticket_id} not found."
+        print(f"❌ {message}") # Keep print for logging
+        return False, message
 
 
 ADMIN_EMAIL = "admin@test.com"
@@ -447,7 +454,7 @@ else:
         print(f"Admin user '{ADMIN_EMAIL}' already exists and is verified.")
 
 
-# Initialize session state for page and authentication if not already set
+# Initialize session state
 if "page" not in st.session_state:
     st.session_state["page"] = "login"
 if "authenticated" not in st.session_state:
@@ -460,10 +467,10 @@ if "user_email" not in st.session_state:
 def login_page():
     st.title("Complaint Management System Login")
 
-    email = st.text_input("Email")
-    password = st.text_input("Password", type="password")
+    email = st.text_input("Email", key="login_email")
+    password = st.text_input("Password", type="password", key="login_password")
 
-    if st.button("Login"):
+    if st.button("Login", key="login_button"):
         auth_success, message = authenticate_user(email, password)
 
         if auth_success:
@@ -484,15 +491,28 @@ def login_page():
 
 
 def user_page():
-    if "authenticated" not in st.session_state or not st.session_state["authenticated"]:
+    # Add checks for session state variables
+    if st.session_state.get("authenticated") is not True or st.session_state.get("user_email") is None:
         st.warning("Please log in to access this page.")
+        if st.button("Go to Login", key="user_go_to_login"):
+            st.session_state["page"] = "login"
+            st.experimental_rerun()
         return
 
     user_email = st.session_state["user_email"]
+    # Add an extra check to prevent admin from accessing user page directly
+    if user_email == ADMIN_EMAIL:
+         st.warning("Admins cannot access the user page.")
+         if st.button("Go to Admin Dashboard", key="user_go_to_admin"):
+              st.session_state["page"] = "admin"
+              st.experimental_rerun()
+         return
+
+
     st.title(f"Welcome, {user_email}!")
 
     # Add a logout button
-    if st.button("Logout"):
+    if st.button("Logout", key="user_logout_button"):
         st.session_state["authenticated"] = False
         st.session_state["user_email"] = None
         st.session_state["page"] = "login"
@@ -519,7 +539,10 @@ def user_page():
             if result["resolved"]:
                 st.success(f"Answer: {result['answer']}")
             else:
-                st.info(f"Could not resolve query. Ticket Raised: {result['ticket_id']}")
+                 if result.get("ticket_id"):
+                    st.info(f"Could not resolve query. Ticket Raised: {result['ticket_id']}")
+                 else:
+                     st.warning(result.get("message", "Could not resolve query."))
         else:
             st.warning("Please enter a query.")
 
@@ -556,14 +579,19 @@ def user_page():
 
 
 def admin_page():
-    if "authenticated" not in st.session_state or not st.session_state["authenticated"] or st.session_state.get("user_email") != ADMIN_EMAIL:
+    # Add checks for session state variables
+    if st.session_state.get("authenticated") is not True or st.session_state.get("user_email") != ADMIN_EMAIL:
         st.warning("Please log in as the admin to access this page.")
+        if st.button("Go to Login", key="admin_go_to_login"):
+            st.session_state["page"] = "login"
+            st.experimental_rerun()
         return
+
 
     st.title("Admin Dashboard")
 
     # Add a logout button
-    if st.button("Logout"):
+    if st.button("Logout", key="admin_logout_button"):
         st.session_state["authenticated"] = False
         st.session_state["user_email"] = None
         st.session_state["page"] = "login"
@@ -618,9 +646,24 @@ def admin_page():
 
 
 # --- Main App Logic ---
-if st.session_state["page"] == "login":
-    login_page()
-elif st.session_state["page"] == "user":
-    user_page()
-elif st.session_state["page"] == "admin":
-    admin_page()
+# Using a function to encapsulate the main logic for better rerun handling
+def main_app():
+    if st.session_state.get("page") == "login":
+        login_page()
+    elif st.session_state.get("page") == "user":
+        user_page()
+    elif st.session_state.get("page") == "admin":
+        admin_page()
+    else: # Default to login page if state is not set or invalid
+        st.session_state["page"] = "login"
+        st.experimental_rerun()
+
+# Run the main app logic
+if __name__ == "__main__":
+    try:
+        main_app()
+    except Exception as e:
+        st.error(f"An unexpected error occurred: {e}")
+        # Optionally, log the full traceback if needed for debugging
+        # import traceback
+        # st.exception(e) # This will show the full traceback in the UI
